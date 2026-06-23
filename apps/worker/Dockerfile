@@ -1,9 +1,10 @@
-FROM mcr.microsoft.com/playwright:v1.49.1-jammy AS base
+FROM mcr.microsoft.com/playwright:v1.61.0-jammy AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
-# The Playwright v1.49.1 image ships Node 22.12 with an old corepack whose
-# bundled pnpm signing keys are stale. pnpm 11.9.0 also requires Node >= 22.13.
-# Install a current Node 22.x from NodeSource, refresh corepack, then activate pnpm.
+# Image tag must match the installed `playwright` version so the bundled browser
+# binaries line up (see redditAdapter launch). The base image's bundled Node can
+# also be too old for pnpm 11.9.0 (needs Node >= 22.13) with stale corepack keys,
+# so install a current Node 22.x from NodeSource and refresh corepack first.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
