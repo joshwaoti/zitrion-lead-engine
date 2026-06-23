@@ -6,7 +6,6 @@ out/
 *.tsbuildinfo
 
 # Convex
-convex/_generated/
 .convex/
 
 # Env / secrets

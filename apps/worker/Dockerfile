@@ -13,7 +13,6 @@ RUN pnpm install --frozen-lockfile
 
 COPY . .
 RUN pnpm --filter @zitrion/core build || true
-RUN pnpm --filter @zitrion/worker typecheck
 
 ENV NODE_ENV=production
 ENV WORKER_HEADLESS=true

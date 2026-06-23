@@ -16,6 +16,8 @@ FROM deps AS builder
 COPY . .
 ARG NEXT_PUBLIC_CONVEX_URL
 ENV NEXT_PUBLIC_CONVEX_URL=$NEXT_PUBLIC_CONVEX_URL
+# convex/_generated is committed for CI/Docker builds (required by dashboard imports).
+RUN test -f convex/_generated/api.js
 RUN pnpm --filter @zitrion/dashboard build
 
 FROM node:22-alpine AS runner
