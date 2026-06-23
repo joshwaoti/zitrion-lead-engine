@@ -1,48 +1,68 @@
 # Infrastructure - Zitrion Lead Engine
 
-Self-hosted Convex backend on Dokploy. Mirrors the working `tiptoo` deployment pattern.
+Self-hosted Convex backend and app services are deployed to Dokploy.
 
-## What is already done (via Dokploy MCP)
+## Dokploy Project
 
-- Dokploy project **`zitrion-lead-engine`** created.
-  - `projectId`: `_6d0mYYCh1Xmp9mM7H1CZ`
-  - `environmentId` (production): `jSxwQ8n4MP4T-La3zPePO`
+- Project: `zitrion-lead-engine`
+- `projectId`: `_6d0mYYCh1Xmp9mM7H1CZ`
+- Production `environmentId`: `jSxwQ8n4MP4T-La3zPePO`
+- GitHub repo: `https://github.com/joshwaoti/zitrion-lead-engine`
 
-## Why the rest is a guided manual step
+## Deployed Services
 
-The Dokploy MCP exposes project / application / postgres / mysql CRUD, but **no `compose-create`** tool, and self-hosted Convex must run as a multi-service compose stack. Admin-key generation also needs a container run. So the Convex stack is deployed once through the Dokploy UI using the files in this folder.
+- Postgres: `zitrion-lead-postgres`
+  - `postgresId`: `ugehq-zZq578mz7uhHEMs`
+  - internal app name: `zitrion-lead-postgres-zxvyep`
+- Convex backend: `zitrion-convex-backend`
+  - `applicationId`: `D6c822ISylyNePL-Nmaen`
+  - image: `ghcr.io/get-convex/convex-backend:latest`
+  - API: `https://convex-lead.zitrion.tech` -> port `3210`
+  - HTTP/site actions: `https://convex-site-lead.zitrion.tech` -> port `3211`
+- Convex admin dashboard: `zitrion-convex-dashboard`
+  - `applicationId`: `KR3hpFftejoQYJRQGNFRd`
+  - URL: `https://convex-dashboard-lead.zitrion.tech` -> port `6791`
+- App dashboard: `zitrion-lead-dashboard`
+  - `applicationId`: `24ulbXw_JnI6c6wue_iDt`
+  - URL: `https://lead.zitrion.tech` -> port `3000`
+  - build: `apps/dashboard/Dockerfile` from repo root
+- VPS worker: `zitrion-lead-worker`
+  - `applicationId`: `vpIHoFS44g1hNcspHsud_`
+  - build: `apps/worker/Dockerfile` from repo root
 
-## Deploy steps
+## Local Secret Files
 
-1. In Dokploy, open project **zitrion-lead-engine** -> **Create Service -> Compose**.
-2. Source = **Raw**; paste [`docker-compose.prod.yml`](./docker-compose.prod.yml).
-3. Open the **Environment** tab and paste the contents of [`.env.example`](./.env.example).
-   - Change `CONVEX_CLOUD_ORIGIN` / `CONVEX_SITE_ORIGIN` to real domains you control.
-   - Secrets (`INSTANCE_SECRET`, `POSTGRES_PASSWORD`) are pre-generated; keep them private.
-4. Add **Domains** in Dokploy:
-   - `CONVEX_CLOUD_ORIGIN` host -> service `convex-backend`, container port `3210`.
-   - `CONVEX_SITE_ORIGIN` host -> service `convex-backend`, container port `3211`.
-   - (optional) a host -> service `convex-dashboard`, container port `6791` for the Convex admin dashboard.
-5. **Deploy**. Wait for `convex-backend` to become healthy.
-6. Read the logs of the **`convex-admin-key`** service. It prints a key like
-   `convex-self-hosted|...`. Copy it into `CONVEX_SELF_HOSTED_ADMIN_KEY` in the env, and into the repo `.env.local` (see below). Re-deploy if you changed compose env.
+Generated secrets are stored locally and intentionally ignored by git:
 
-## Push the Convex schema + functions
+- `infra/.env.deploy.local`: Dokploy/Convex deployment secrets, URLs, generated worker token.
+- `.env.local`: Convex CLI values for pushing to the self-hosted backend.
 
-From the repo root, with the admin key in hand:
+Do not commit these files.
+
+## Convex Deployment
+
+Convex schema and functions were pushed with:
 
 ```bash
-# .env.local at repo root (consumed by the convex CLI)
-CONVEX_SELF_HOSTED_URL=https://convex-lead.zitrion.tech      # = CONVEX_CLOUD_ORIGIN
-CONVEX_SELF_HOSTED_ADMIN_KEY=convex-self-hosted|...          # from step 6
-
-npx convex deploy   # pushes convex/ schema + functions to the self-hosted backend
+npx convex deploy
 ```
 
-The dashboard reads `NEXT_PUBLIC_CONVEX_URL=$CONVEX_CLOUD_ORIGIN`.
+Required Convex deployment env vars are set with `npx convex env set`:
 
-## App services (deploy after the code is built)
+- `EXTENSION_PAIRING_SECRET`
+- `OPENROUTER_API_KEY`
+- `OPENROUTER_APP_URL`
+- `OPENROUTER_APP_TITLE`
 
-- `apps/dashboard` (Next.js) and `apps/worker` (Playwright) deploy as their own Dokploy
-  applications/compose in the same project, with `NEXT_PUBLIC_CONVEX_URL` and
-  `OPENROUTER_API_KEY` set in their env.
+The seeded default workspace id is `k978c7vfeap486dcxfwxwsw6bn8964ph`.
+
+## DNS Records
+
+Point these hosts at the Dokploy VPS:
+
+- `lead.zitrion.tech`
+- `convex-lead.zitrion.tech`
+- `convex-site-lead.zitrion.tech`
+- `convex-dashboard-lead.zitrion.tech`
+
+Dokploy is configured to request Let's Encrypt certificates for all four hosts.

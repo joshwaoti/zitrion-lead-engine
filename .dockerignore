@@ -1,0 +1,16 @@
+.git
+.convex
+node_modules
+**/node_modules
+**/.next
+**/dist
+**/build
+**/*.tsbuildinfo
+
+.env
+.env.local
+.env.*.local
+infra/.env.deploy.local
+
+*.log
+agent-tools
