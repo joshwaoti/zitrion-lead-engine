@@ -1,7 +1,10 @@
 FROM mcr.microsoft.com/playwright:v1.49.1-jammy AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable && corepack prepare pnpm@11.9.0 --activate
+# The Playwright base image ships an old corepack whose bundled pnpm signing
+# keys are stale ("Cannot find matching keyid"). Upgrade corepack first so it
+# can verify and activate pnpm 11.9.0.
+RUN npm install -g corepack@latest && corepack enable && corepack prepare pnpm@11.9.0 --activate
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
