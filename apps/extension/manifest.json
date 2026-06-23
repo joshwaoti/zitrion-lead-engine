@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "Zitrion Lead Engine",
+  "version": "0.1.0",
+  "description": "Reddit lead discovery and paced auto-send on your live Chrome session (Instaworm-style executor).",
+  "permissions": ["storage", "alarms", "tabs", "scripting"],
+  "host_permissions": [
+    "https://www.reddit.com/*",
+    "https://old.reddit.com/*",
+    "https://www.instagram.com/*",
+    "https://*.convex.site/*",
+    "https://*.convex.cloud/*",
+    "http://localhost:*/*",
+    "http://127.0.0.1:*/*"
+  ],
+  "background": {
+    "service_worker": "src/background/service-worker.ts",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_title": "Zitrion Lead Engine",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.reddit.com/*", "https://old.reddit.com/*"],
+      "js": ["src/content/reddit/index.ts"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.instagram.com/*"],
+      "js": ["src/content/instagram/index.ts"],
+      "run_at": "document_idle"
+    }
+  ]
+}

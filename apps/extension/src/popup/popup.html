@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Zitrion Lead Engine</title>
+    <link rel="stylesheet" href="./popup.css" />
+  </head>
+  <body>
+    <main class="popup">
+      <header>
+        <h1>Zitrion</h1>
+        <p class="subtitle">Lead Engine Executor</p>
+      </header>
+
+      <section class="status-card" id="status-card">
+        <div class="row">
+          <span>Session</span>
+          <strong id="session-status">—</strong>
+        </div>
+        <div class="row">
+          <span>Sends today</span>
+          <strong id="sends-meter">—</strong>
+        </div>
+        <div class="row">
+          <span>Next send</span>
+          <strong id="next-send">—</strong>
+        </div>
+        <p class="pause-reason" id="pause-reason" hidden></p>
+      </section>
+
+      <section class="controls">
+        <label class="toggle">
+          <input type="checkbox" id="kill-switch" />
+          <span>Local kill switch</span>
+        </label>
+        <button id="discover-now" type="button">Poll discovery now</button>
+        <a id="dashboard-link" href="#" target="_blank" rel="noreferrer">Open dashboard</a>
+      </section>
+
+      <details class="pairing">
+        <summary>Pairing / config</summary>
+        <label>
+          Convex URL
+          <input id="convex-url" type="url" placeholder="https://convex-lead.zitrion.tech" />
+        </label>
+        <label>
+          Workspace ID
+          <input id="workspace-id" type="text" placeholder="workspace id" />
+        </label>
+        <label>
+          Device token
+          <input id="device-token" type="password" placeholder="from pairDevice" />
+        </label>
+        <label>
+          Dashboard URL
+          <input id="dashboard-url" type="url" placeholder="https://lead.zitrion.tech" />
+        </label>
+        <button id="save-config" type="button">Save pairing</button>
+      </details>
+
+      <p class="hint">Uses your live Reddit session. No credentials stored.</p>
+    </main>
+    <script type="module" src="./popup.ts"></script>
+  </body>
+</html>

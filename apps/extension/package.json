@@ -1,0 +1,21 @@
+{
+  "name": "@zitrion/extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MV3 Chrome extension (Vite + CRXJS): Reddit scraper + paced auto-send executor on live session.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@zitrion/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.0.0",
+    "@types/chrome": "^0.0.287",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.7"
+  }
+}

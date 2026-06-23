@@ -1,0 +1,33 @@
+{
+  "name": "zitrion-lead-engine",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Zitrion Social Lead Engine - Reddit-first, Instagram-ready lead-gen backbone (Convex + OpenRouter). The workspace root is also the Convex project.",
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "convex:dev": "convex dev",
+    "convex:codegen": "convex codegen",
+    "typecheck": "tsc -p convex/tsconfig.json && pnpm -r --if-present typecheck",
+    "lint": "eslint convex",
+    "build": "pnpm -r --if-present build",
+    "extension:build": "pnpm --filter @zitrion/extension build",
+    "extension:dev": "pnpm --filter @zitrion/extension dev",
+    "dashboard:dev": "pnpm --filter @zitrion/dashboard dev",
+    "worker:dev": "pnpm --filter @zitrion/worker start"
+  },
+  "dependencies": {
+    "@zitrion/core": "workspace:*",
+    "convex": "^1.41.0",
+    "convex-helpers": "^0.1.119"
+  },
+  "devDependencies": {
+    "@convex-dev/eslint-plugin": "^2.0.0",
+    "@types/node": "^22.20.0",
+    "eslint": "^9.17.0",
+    "typescript": "^5.7.3"
+  }
+}
