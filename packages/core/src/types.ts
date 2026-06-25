@@ -36,6 +36,7 @@ export type Intent =
 /** Pipeline / CRM stage for a lead (PRD §4.7 + review-queue states). */
 export type LeadStatus =
   | "new"
+  | "queued"
   | "contacted"
   | "replied"
   | "in_conversation"
@@ -76,6 +77,7 @@ export type DraftStatus =
   | "pending"
   | "approved"
   | "edited"
+  | "regenerating"
   | "sent"
   | "skipped"
   | "dismissed";
@@ -84,7 +86,7 @@ export type DraftStatus =
 export type ActionStatus = "approved" | "pending" | "done" | "failed";
 
 /** The tone/intent of an outbound draft. */
-export type DraftGoal = "help_first" | "soft_pitch" | "direct_pitch";
+export type DraftGoal = "help_first" | "soft_pitch" | "direct" | "direct_pitch";
 
 /** The four discrete AI pipeline sections, each with its own model fallback chain. */
 export type PipelineSection = "classify" | "score" | "research" | "draft";

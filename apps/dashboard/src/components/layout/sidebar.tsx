@@ -83,7 +83,7 @@ export function Sidebar() {
               Sends today
             </span>
             <span className="font-mono text-xs text-cream">
-              {stats?.sendsToday ?? 0} / {stats?.dailySendCeiling ?? 12}
+              {stats?.sendsToday ?? 0} / {stats?.dailySendCeiling ?? 50}
             </span>
           </div>
           <div className="h-[5px] overflow-hidden rounded bg-[#2a2820]">

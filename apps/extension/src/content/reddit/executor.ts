@@ -29,6 +29,28 @@ function permalinkFromLocation(): string {
   return url.toString();
 }
 
+async function typeHumanLike(
+  element: HTMLTextAreaElement | HTMLElement,
+  content: string
+): Promise<void> {
+  element.focus();
+  if (element instanceof HTMLTextAreaElement) {
+    element.value = "";
+    for (const char of content) {
+      element.value += char;
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+      await humanDelay(35, 120);
+    }
+    return;
+  }
+  element.textContent = "";
+  for (const char of content) {
+    element.textContent += char;
+    element.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await humanDelay(35, 120);
+  }
+}
+
 async function executeComment(content: string): Promise<string> {
   const isOld = location.hostname === "old.reddit.com";
 
@@ -36,9 +58,7 @@ async function executeComment(content: string): Promise<string> {
     const textarea = (await waitForSelector(
       'form.usertext.editable textarea[name="text"], .commentarea textarea[name="text"]'
     )) as HTMLTextAreaElement;
-    textarea.focus();
-    textarea.value = content;
-    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await typeHumanLike(textarea, content);
     await humanDelay(400, 900);
 
     const submit = document.querySelector(
@@ -55,13 +75,9 @@ async function executeComment(content: string): Promise<string> {
   );
 
   if (composer instanceof HTMLTextAreaElement) {
-    composer.focus();
-    composer.value = content;
-    composer.dispatchEvent(new Event("input", { bubbles: true }));
+    await typeHumanLike(composer, content);
   } else {
-    (composer as HTMLElement).focus();
-    (composer as HTMLElement).textContent = content;
-    composer.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await typeHumanLike(composer as HTMLElement, content);
   }
 
   await humanDelay(500, 1200);

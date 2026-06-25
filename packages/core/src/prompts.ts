@@ -191,6 +191,7 @@ export interface DraftInput {
 const GOAL_GUIDANCE: Record<DraftGoal, string> = {
   help_first: "Lead with genuine help/insight. Pitch is absent or a single soft line at the end.",
   soft_pitch: "Lead with value, then a light, natural mention that you build this kind of thing.",
+  direct: "Be helpful first, then make a clear but non-pushy offer to help build it.",
   direct_pitch: "Be helpful first, then make a clear but non-pushy offer to help build it.",
 };
 

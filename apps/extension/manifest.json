@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Zitrion Lead Engine",
   "version": "0.1.0",
-  "description": "Reddit lead discovery and paced auto-send on your live Chrome session (Instaworm-style executor).",
+  "description": "Reddit and Instagram lead discovery with AI-drafted outreach review.",
   "permissions": ["storage", "alarms", "tabs", "scripting"],
   "host_permissions": [
     "https://www.reddit.com/*",
@@ -10,6 +10,7 @@
     "https://www.instagram.com/*",
     "https://*.convex.site/*",
     "https://*.convex.cloud/*",
+    "https://*.zitrion.tech/*",
     "http://localhost:*/*",
     "http://127.0.0.1:*/*"
   ],

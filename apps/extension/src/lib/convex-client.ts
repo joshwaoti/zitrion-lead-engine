@@ -71,10 +71,6 @@ export async function ingestCandidates(
   deviceToken: string,
   candidates: RawCandidate[]
 ): Promise<{ inserted: number; deduped: number }> {
-  if (candidates.length === 0) {
-    return { inserted: 0, deduped: 0 };
-  }
-
   return convexCall(convexUrl, "mutation", "extension:ingestCandidates", {
     deviceToken,
     candidates,
@@ -129,6 +125,17 @@ export async function setExtensionPaused(
     deviceToken,
     paused,
     reason,
+  });
+}
+
+export async function reportActivity(
+  convexUrl: string,
+  deviceToken: string,
+  message: string
+): Promise<void> {
+  await convexCall(convexUrl, "mutation", "extension:reportActivity", {
+    deviceToken,
+    message,
   });
 }
 

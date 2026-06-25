@@ -14,6 +14,7 @@ import type * as drafts from "../drafts.js";
 import type * as events from "../events.js";
 import type * as extension from "../extension.js";
 import type * as leads from "../leads.js";
+import type * as lib_candidateStats from "../lib/candidateStats.js";
 import type * as lib_deviceAuth from "../lib/deviceAuth.js";
 import type * as lib_json from "../lib/json.js";
 import type * as lib_leadLogic from "../lib/leadLogic.js";
@@ -40,6 +41,7 @@ declare const fullApi: ApiFromModules<{
   events: typeof events;
   extension: typeof extension;
   leads: typeof leads;
+  "lib/candidateStats": typeof lib_candidateStats;
   "lib/deviceAuth": typeof lib_deviceAuth;
   "lib/json": typeof lib_json;
   "lib/leadLogic": typeof lib_leadLogic;

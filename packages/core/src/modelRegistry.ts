@@ -5,24 +5,24 @@ export const FREE_MODEL_ROSTER_URL = "https://openrouter.ai/api/v1/models";
 /** Default OpenRouter free-model fallback chains per pipeline section. */
 export const DEFAULT_MODEL_CHAINS: Record<PipelineSection, string[]> = {
   classify: [
-    "google/gemini-2.0-flash-exp:free",
     "meta-llama/llama-3.3-70b-instruct:free",
-    "mistralai/mistral-small-24b-instruct-2501:free",
+    "qwen/qwen3-next-80b-a3b-instruct:free",
+    "google/gemma-4-31b-it:free",
   ],
   score: [
-    "deepseek/deepseek-chat-v3-0324:free",
-    "qwen/qwen3-235b-a22b:free",
+    "qwen/qwen3-next-80b-a3b-instruct:free",
     "meta-llama/llama-3.3-70b-instruct:free",
+    "nousresearch/hermes-3-llama-3.1-405b:free",
   ],
   research: [
-    "meta-llama/llama-4-maverick:free",
-    "google/gemini-2.0-flash-exp:free",
-    "qwen/qwen3-235b-a22b:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "qwen/qwen3-next-80b-a3b-instruct:free",
+    "google/gemma-4-31b-it:free",
   ],
   draft: [
-    "deepseek/deepseek-r1:free",
-    "qwen/qwen3-235b-a22b:free",
     "meta-llama/llama-3.3-70b-instruct:free",
+    "qwen/qwen3-next-80b-a3b-instruct:free",
+    "openai/gpt-oss-20b:free",
   ],
 };
 

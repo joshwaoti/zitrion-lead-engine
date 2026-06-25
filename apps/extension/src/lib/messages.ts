@@ -1,7 +1,7 @@
 import type { ApprovedAction, CommenterProfile, InboxMessage, RawCandidate, WatchRule } from "@zitrion/core";
 
 export type BackgroundMessage =
-  | { type: "RUN_DISCOVERY"; rules: WatchRule[] }
+  | { type: "SCRAPE_FOR_RULE"; rule: WatchRule }
   | { type: "EXECUTE_ACTION"; action: ApprovedAction }
   | { type: "CHECK_THROTTLE" }
   | { type: "GET_PAGE_CONTEXT" }
@@ -15,12 +15,14 @@ export type ContentMessage =
   | { type: "ACTION_RESULT"; actionId: string; status: "done" | "failed"; permalink?: string; errorMessage?: string }
   | { type: "THROTTLE_DETECTED"; reason: string }
   | { type: "PAGE_CONTEXT"; loggedIn: boolean; url: string }
+  | { type: "DISCOVERY_PROGRESS"; step: string }
   | { type: "ERROR"; message: string };
 
 export type PopupMessage =
   | { type: "GET_STATUS" }
   | { type: "TOGGLE_KILL_SWITCH"; enabled: boolean }
   | { type: "TRIGGER_DISCOVERY" }
+  | { type: "TRIGGER_INSTAGRAM_DISCOVERY" }
   | { type: "SAVE_CONFIG"; config: { convexUrl: string; deviceToken: string; workspaceId: string; dashboardUrl: string } };
 
 export type ServiceWorkerResponse =

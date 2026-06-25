@@ -2,7 +2,7 @@
   "name": "@zitrion/extension",
   "version": "0.1.0",
   "private": true,
-  "description": "MV3 Chrome extension (Vite + CRXJS): Reddit scraper + paced auto-send executor on live session.",
+  "description": "MV3 Chrome extension (Vite + CRXJS): Reddit and Instagram lead discovery for AI-drafted outreach review.",
   "type": "module",
   "scripts": {
     "dev": "vite",

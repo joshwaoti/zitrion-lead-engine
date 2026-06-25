@@ -7,6 +7,9 @@ const nextSendEl = document.getElementById("next-send")!;
 const pauseReasonEl = document.getElementById("pause-reason") as HTMLParagraphElement;
 const killSwitchEl = document.getElementById("kill-switch") as HTMLInputElement;
 const discoverNowEl = document.getElementById("discover-now") as HTMLButtonElement;
+const instagramDiscoverNowEl = document.getElementById(
+  "instagram-discover-now"
+) as HTMLButtonElement;
 const dashboardLinkEl = document.getElementById("dashboard-link") as HTMLAnchorElement;
 const convexUrlEl = document.getElementById("convex-url") as HTMLInputElement;
 const workspaceIdEl = document.getElementById("workspace-id") as HTMLInputElement;
@@ -33,7 +36,7 @@ async function refreshUi(): Promise<void> {
   sessionStatusEl.className = paused ? "status-paused" : "status-active";
 
   sendsMeterEl.textContent = `${status.sendsToday} / ${status.dailySendCeiling || "—"}`;
-  nextSendEl.textContent = status.extensionPaused ? "Paused" : "Polling";
+  nextSendEl.textContent = status.extensionPaused ? "Paused" : "Manual send";
 
   if (status.pauseReason) {
     pauseReasonEl.hidden = false;
@@ -71,6 +74,15 @@ discoverNowEl.addEventListener("click", async () => {
   await chrome.runtime.sendMessage({ type: "TRIGGER_DISCOVERY" });
   discoverNowEl.disabled = false;
   discoverNowEl.textContent = "Poll discovery now";
+  await refreshUi();
+});
+
+instagramDiscoverNowEl.addEventListener("click", async () => {
+  instagramDiscoverNowEl.disabled = true;
+  instagramDiscoverNowEl.textContent = "Scraping...";
+  await chrome.runtime.sendMessage({ type: "TRIGGER_INSTAGRAM_DISCOVERY" });
+  instagramDiscoverNowEl.disabled = false;
+  instagramDiscoverNowEl.textContent = "Scrape current Instagram post";
   await refreshUi();
 });
 

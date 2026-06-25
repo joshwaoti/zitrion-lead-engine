@@ -73,6 +73,17 @@ export const updatePacing = mutation({
     const workspace = await getWorkspace(ctx);
     if (!workspace) throw new Error("Workspace not found");
 
+    if (args.dailySendCeiling !== undefined) {
+      if (args.dailySendCeiling < 1 || args.dailySendCeiling > 200) {
+        throw new Error("Daily send ceiling must be between 1 and 200");
+      }
+    }
+    if (args.minGapMinutes !== undefined) {
+      if (args.minGapMinutes < 1 || args.minGapMinutes > 60) {
+        throw new Error("Min gap must be between 1 and 60 minutes");
+      }
+    }
+
     await ctx.db.patch("workspaces", workspace._id, {
       ...(args.dailySendCeiling !== undefined
         ? { dailySendCeiling: args.dailySendCeiling }
@@ -117,10 +128,20 @@ export const getModelConfig = query({
     const workspace = await getWorkspace(ctx);
     if (!workspace) return null;
 
-    return await ctx.db
+    const config = await ctx.db
       .query("modelConfig")
       .withIndex("by_workspace", (q) => q.eq("workspaceId", workspace._id))
       .first();
+
+    if (!config) return null;
+
+    return {
+      _id: config._id,
+      classify: config.classify,
+      score: config.score,
+      research: config.research,
+      draft: config.draft,
+    };
   },
 });
 
@@ -190,11 +211,6 @@ export const getSidebarStats = query({
       )
       .collect();
 
-    const pipeline = await ctx.db
-      .query("leads")
-      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspace._id))
-      .collect();
-
     const activeRules = await ctx.db
       .query("watchRules")
       .withIndex("by_workspace", (q) => q.eq("workspaceId", workspace._id))
@@ -202,9 +218,7 @@ export const getSidebarStats = query({
 
     return {
       queueCount: queue.length,
-      pipelineCount: pipeline.filter(
-        (l) => l.status !== "dismissed" && l.status !== "snoozed"
-      ).length,
+      pipelineCount: queue.length,
       sendsToday: workspace.sendsToday,
       dailySendCeiling: workspace.dailySendCeiling,
       nextSendWindowAt: workspace.nextSendWindowAt,

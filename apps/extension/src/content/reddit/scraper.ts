@@ -1,4 +1,5 @@
 import type { RawCandidate, WatchRule } from "@zitrion/core";
+import { humanPause, scrollLikeHuman } from "./human-browse";
 
 type RedditListingChild = {
   kind: string;
@@ -64,17 +65,37 @@ function matchesKeyword(candidate: RawCandidate, keyword: string): boolean {
   return haystack.includes(needle);
 }
 
+const MAX_RULES_PER_CYCLE = 6;
+export { MAX_RULES_PER_CYCLE };
+
+function buildJsonListingUrl(path: string): string {
+  if (path.includes("/search")) {
+    const url = new URL(path, "https://www.reddit.com");
+    const params = new URLSearchParams(url.search);
+    params.set("limit", "25");
+    params.set("raw_json", "1");
+    return `https://www.reddit.com/search.json?${params.toString()}`;
+  }
+
+  const normalized = path.replace(/\/$/, "");
+  return `${normalized}.json?limit=25&raw_json=1`;
+}
+
 async function fetchListing(path: string): Promise<RedditListingChild[]> {
-  const response = await fetch(`${path}.json?limit=25&raw_json=1`, {
+  const jsonUrl = buildJsonListingUrl(path);
+  const response = await fetch(jsonUrl, {
     credentials: "include",
+    headers: { Accept: "application/json" },
   });
 
   if (!response.ok) {
-    throw new Error(`Reddit listing failed (${response.status}) for ${path}`);
+    throw new Error(`Reddit listing failed (${response.status}) for ${jsonUrl}`);
   }
 
-  const payload = (await response.json()) as RedditListing[];
-  const listing = payload[0]?.data?.children ?? [];
+  const payload = (await response.json()) as RedditListing[] | RedditListing;
+  const listing = Array.isArray(payload)
+    ? (payload[0]?.data?.children ?? [])
+    : (payload.data?.children ?? []);
   return listing;
 }
 
@@ -96,35 +117,41 @@ export async function scrapeKeyword(keyword: string): Promise<RawCandidate[]> {
     .filter((candidate): candidate is RawCandidate => candidate !== null);
 }
 
-export async function runDiscovery(rules: WatchRule[]): Promise<RawCandidate[]> {
+function mergeCandidates(
+  seen: Set<string>,
+  results: RawCandidate[],
+  batch: RawCandidate[]
+): void {
+  for (const candidate of batch) {
+    if (!candidate.sourceId || seen.has(candidate.sourceId)) continue;
+    seen.add(candidate.sourceId);
+    results.push(candidate);
+  }
+}
+
+/** Scrape the current Reddit page for one rule (no navigation — background drives tabs). */
+export async function scrapeForRule(rule: WatchRule): Promise<RawCandidate[]> {
   const seen = new Set<string>();
   const results: RawCandidate[] = [];
 
-  for (const rule of rules) {
-    if (!rule.enabled) continue;
+  await scrollLikeHuman(2 + Math.floor(Math.random() * 2));
+  await humanPause(400, 900);
 
-    try {
-      if (rule.type === "subreddit") {
-        const candidates = await scrapeSubreddit(rule.value);
-        for (const candidate of candidates) {
-          if (seen.has(candidate.sourceId)) continue;
-          seen.add(candidate.sourceId);
-          results.push(candidate);
-        }
-      } else {
-        const candidates = await scrapeKeyword(rule.value);
-        for (const candidate of candidates) {
-          if (!matchesKeyword(candidate, rule.value)) continue;
-          if (seen.has(candidate.sourceId)) continue;
-          seen.add(candidate.sourceId);
-          results.push(candidate);
-        }
-      }
-    } catch (error) {
-      console.warn("[zitrion] discovery rule failed", rule, error);
+  mergeCandidates(seen, results, scrapeVisiblePosts());
+
+  try {
+    if (rule.type === "subreddit") {
+      mergeCandidates(seen, results, await scrapeSubreddit(rule.value));
+    } else {
+      const remote = await scrapeKeyword(rule.value);
+      mergeCandidates(
+        seen,
+        results,
+        remote.filter((candidate) => matchesKeyword(candidate, rule.value))
+      );
     }
-
-    await delay(800 + Math.random() * 1200);
+  } catch (error) {
+    console.warn("[zitrion] JSON scrape failed for rule", rule, error);
   }
 
   return results;
@@ -199,10 +226,6 @@ export function scrapeVisiblePosts(): RawCandidate[] {
   });
 
   return candidates;
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function isLoggedIn(): boolean {

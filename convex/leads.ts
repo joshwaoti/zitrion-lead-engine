@@ -35,6 +35,7 @@ export const getInternal = internalQuery({
 export const promoteFromCandidateInternal = internalMutation({
   args: {
     candidateId: v.id("candidates"),
+    type: v.optional(v.union(v.literal("comment"), v.literal("dm"))),
     variantA: v.string(),
     variantB: v.string(),
     groundedRefs: v.array(v.string()),
@@ -80,7 +81,7 @@ export const promoteFromCandidateInternal = internalMutation({
     const draftId = await ctx.db.insert("drafts", {
       leadId,
       workspaceId: candidate.workspaceId,
-      type: "comment",
+      type: args.type ?? "comment",
       goal: "help_first",
       variantA: args.variantA,
       variantB: args.variantB,

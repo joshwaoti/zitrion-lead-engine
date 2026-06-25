@@ -1,6 +1,13 @@
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import { mutation, query } from "./_generated/server";
-import { getWorkspace } from "./lib/workspace";
+import {
+  candidateStatusKey,
+  readCandidateStats,
+  rebuildCandidateStats,
+  transitionCandidateStat,
+} from "./lib/candidateStats";
+import { getWorkspace, resetDefaultWatchRules } from "./lib/workspace";
 
 const intentValidator = v.union(
   v.literal("active_buying"),
@@ -20,6 +27,7 @@ const watchRuleValidator = v.object({
 
 const candidateValidator = v.object({
   _id: v.id("candidates"),
+  platform: v.union(v.literal("reddit"), v.literal("instagram")),
   handle: v.string(),
   subreddit: v.string(),
   snippet: v.string(),
@@ -34,7 +42,52 @@ const candidateValidator = v.object({
     v.literal("deduped"),
     v.literal("irrelevant")
   ),
+  pipelineStage: v.optional(v.string()),
   postedAt: v.number(),
+  url: v.optional(v.string()),
+});
+
+export const getLiveStatus = query({
+  args: {},
+  returns: v.object({
+    redditConnected: v.boolean(),
+    sessionActive: v.boolean(),
+    lastPollAt: v.optional(v.number()),
+    nextPollAt: v.optional(v.number()),
+    counts: v.object({
+      raw: v.number(),
+      processing: v.number(),
+      classified: v.number(),
+      irrelevant: v.number(),
+      deduped: v.number(),
+    }),
+  }),
+  handler: async (ctx) => {
+    const workspace = await getWorkspace(ctx);
+    if (!workspace) {
+      return {
+        redditConnected: false,
+        sessionActive: false,
+        counts: { raw: 0, processing: 0, classified: 0, irrelevant: 0, deduped: 0 },
+      };
+    }
+
+    const counts = readCandidateStats(workspace.candidateStats);
+
+    return {
+      redditConnected: workspace.redditConnected,
+      sessionActive: workspace.sessionActive,
+      lastPollAt: workspace.lastPollAt,
+      nextPollAt: workspace.nextPollAt,
+      counts: {
+        raw: counts.raw,
+        processing: counts.processing,
+        classified: counts.classified,
+        irrelevant: counts.irrelevant,
+        deduped: counts.deduped,
+      },
+    };
+  },
 });
 
 export const getWatchRules = query({
@@ -66,59 +119,61 @@ export const getWatchRules = query({
       .withIndex("by_workspace", (q) => q.eq("workspaceId", workspace._id))
       .collect();
 
-    const candidates = await ctx.db
-      .query("candidates")
-      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspace._id))
-      .collect();
+    const counts = readCandidateStats(workspace.candidateStats);
 
-    const queuedCount = await ctx.db
-      .query("leads")
-      .withIndex("by_workspace_and_status", (q) =>
-        q.eq("workspaceId", workspace._id).eq("status", "queued")
-      )
-      .collect();
+    const mapWatchRule = (rule: (typeof rules)[number]) => ({
+      _id: rule._id,
+      type: rule.type,
+      value: rule.value,
+      enabled: rule.enabled,
+      noPromo: rule.noPromo,
+    });
 
     return {
-      subreddits: rules.filter((r) => r.type === "subreddit"),
-      keywords: rules.filter((r) => r.type === "keyword"),
+      subreddits: rules
+        .filter((r) => r.type === "subreddit")
+        .map(mapWatchRule),
+      keywords: rules.filter((r) => r.type === "keyword").map(mapWatchRule),
       lastPollAt: workspace.lastPollAt,
       nextPollAt: workspace.nextPollAt,
       stats: {
-        found: candidates.length + 20,
-        surfaced: queuedCount.length,
-        deduped: candidates.filter((c) => c.status === "deduped").length,
-        irrelevant: candidates.filter((c) => c.status === "irrelevant").length,
+        found: counts.found,
+        surfaced: counts.classified,
+        deduped: counts.deduped,
+        irrelevant: counts.irrelevant,
       },
     };
   },
 });
 
 export const listCandidates = query({
-  args: {},
+  args: { limit: v.optional(v.number()) },
   returns: v.array(candidateValidator),
-  handler: async (ctx) => {
+  handler: async (ctx, args) => {
     const workspace = await getWorkspace(ctx);
     if (!workspace) return [];
 
+    const limit = Math.min(args.limit ?? 50, 100);
     const candidates = await ctx.db
       .query("candidates")
-      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspace._id))
-      .collect();
+      .withIndex("by_workspace_and_posted", (q) =>
+        q.eq("workspaceId", workspace._id)
+      )
+      .order("desc")
+      .take(limit);
 
-    return candidates
-      .sort((a, b) => b.postedAt - a.postedAt)
-      .map((candidate) => ({
+    return candidates.map((candidate) => ({
         _id: candidate._id,
+        platform: candidate.platform,
         handle: candidate.handle,
         subreddit: candidate.subreddit,
         snippet: candidate.snippet,
-        classification: candidate.classification ?? "irrelevant",
-        confidence: candidate.confidence ?? 0,
-        status:
-          candidate.status === "raw"
-            ? ("classified" as const)
-            : candidate.status,
+        classification: candidate.classification,
+        confidence: candidate.confidence,
+        status: candidate.status,
+        pipelineStage: candidate.pipelineStage,
         postedAt: candidate.postedAt,
+        url: candidate.url,
       }));
   },
 });
@@ -151,6 +206,14 @@ export const addWatchRule = mutation({
   },
 });
 
+export const resetWatchRules = mutation({
+  args: {},
+  returns: v.object({ subredditCount: v.number(), keywordCount: v.number() }),
+  handler: async (ctx) => {
+    return await resetDefaultWatchRules(ctx);
+  },
+});
+
 export const pollNow = mutation({
   args: {},
   returns: v.null(),
@@ -175,6 +238,65 @@ export const pollNow = mutation({
   },
 });
 
+/** Re-run AI classify on raw candidates (e.g. after fixing OpenRouter). */
+export const reclassifyRaw = mutation({
+  args: { limit: v.optional(v.number()) },
+  returns: v.object({ scheduled: v.number() }),
+  handler: async (ctx, args) => {
+    const workspace = await getWorkspace(ctx);
+    if (!workspace) throw new Error("Workspace not found");
+
+    const raw = await ctx.db
+      .query("candidates")
+      .withIndex("by_workspace_and_status", (q) =>
+        q.eq("workspaceId", workspace._id).eq("status", "raw")
+      )
+      .take(args.limit ?? 500);
+
+    const batch = raw;
+
+    for (let i = 0; i < batch.length; i += 1) {
+      const candidate = batch[i]!;
+      await ctx.db.patch("candidates", candidate._id, {
+        skipReason: undefined,
+        pipelineStage: "raw",
+      });
+      await ctx.scheduler.runAfter(i * 3000, internal.pipelineAi.classify, {
+        candidateId: candidate._id,
+      });
+    }
+
+    const now = Date.now();
+    await ctx.db.insert("events", {
+      workspaceId: workspace._id,
+      type: "pipeline.classify",
+      message: `Re-classify scheduled for ${batch.length} raw candidate${batch.length === 1 ? "" : "s"}`,
+      createdAt: now,
+    });
+
+    return { scheduled: batch.length };
+  },
+});
+
+export const rebuildStats = mutation({
+  args: {},
+  returns: v.object({
+    raw: v.number(),
+    processing: v.number(),
+    classified: v.number(),
+    irrelevant: v.number(),
+    deduped: v.number(),
+    dismissed: v.number(),
+    promoted: v.number(),
+    found: v.number(),
+  }),
+  handler: async (ctx) => {
+    const workspace = await getWorkspace(ctx);
+    if (!workspace) throw new Error("Workspace not found");
+    return await rebuildCandidateStats(ctx, workspace._id);
+  },
+});
+
 export const promoteCandidate = mutation({
   args: { candidateId: v.id("candidates") },
   returns: v.id("leads"),
@@ -189,8 +311,10 @@ export const promoteCandidate = mutation({
     const leadId = await ctx.db.insert("leads", {
       workspaceId: candidate.workspaceId,
       candidateId: candidate._id,
+      platform: candidate.platform,
       handle: candidate.handle,
       subreddit: candidate.subreddit,
+      threadUrl: candidate.url,
       intent: candidate.classification,
       score: Math.round(confidence * 100),
       contextCard: "Promoted from discovery — awaiting research pipeline.",
@@ -212,7 +336,7 @@ export const promoteCandidate = mutation({
     await ctx.db.insert("drafts", {
       leadId,
       workspaceId: candidate.workspaceId,
-      type: "comment",
+      type: candidate.platform === "instagram" ? "dm" : "comment",
       goal: "help_first",
       variantA: "Draft pending — run AI pipeline to generate.",
       variantB: "",
@@ -223,6 +347,7 @@ export const promoteCandidate = mutation({
     await ctx.db.patch("candidates", args.candidateId, {
       status: "promoted",
     });
+    await transitionCandidateStat(ctx, candidate.workspaceId, "classified", "promoted");
 
     return leadId;
   },
@@ -232,6 +357,15 @@ export const dismissCandidate = mutation({
   args: { candidateId: v.id("candidates") },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const candidate = await ctx.db.get("candidates", args.candidateId);
+    if (!candidate) throw new Error("Candidate not found");
+
+    await transitionCandidateStat(
+      ctx,
+      candidate.workspaceId,
+      candidateStatusKey(candidate.status),
+      "dismissed"
+    );
     await ctx.db.patch("candidates", args.candidateId, {
       status: "dismissed",
     });

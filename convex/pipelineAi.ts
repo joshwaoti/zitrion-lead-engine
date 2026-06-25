@@ -39,56 +39,82 @@ export const classify = internalAction({
   args: { candidateId: v.id("candidates") },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const candidate = await ctx.runQuery(internal.candidates.getInternal, {
-      candidateId: args.candidateId,
-    });
-    if (!candidate || candidate.status !== "raw") return null;
+    let workspaceId: import("./_generated/dataModel").Id<"workspaces"> | null = null;
+    let handle = "candidate";
 
-    await ctx.runMutation(internal.candidates.setProcessingInternal, {
-      candidateId: args.candidateId,
-    });
+    try {
+      const candidate = await ctx.runQuery(internal.candidates.getInternal, {
+        candidateId: args.candidateId,
+      });
+      if (!candidate) return null;
+      if (candidate.status !== "raw" && candidate.status !== "processing") {
+        return null;
+      }
 
-    const { system, user } = buildClassifyPrompt({
-      platform: candidate.platform,
-      sourceUrl: candidate.url,
-      text: [candidate.snippet, candidate.postBody].filter(Boolean).join("\n\n"),
-    });
+      workspaceId = candidate.workspaceId;
+      handle = candidate.handle;
 
-    const result = await callModel(ctx, {
-      workspaceId: candidate.workspaceId,
-      section: "classify",
-      system,
-      user,
-      validate: parseClassifyOutput,
-    });
+      await ctx.runMutation(internal.candidates.setProcessingInternal, {
+        candidateId: args.candidateId,
+      });
 
-    const dashboardIntent = mapCoreIntentToDashboard(result.intent);
-    const promotable =
-      isPromotableCoreIntent(result.intent) &&
-      result.relevance >= PROMOTE_RELEVANCE_THRESHOLD;
+      const { system, user } = buildClassifyPrompt({
+        platform: candidate.platform,
+        sourceUrl: candidate.url,
+        text: [candidate.snippet, candidate.postBody].filter(Boolean).join("\n\n"),
+      });
 
-    if (!promotable) {
+      const result = await callModel(ctx, {
+        workspaceId: candidate.workspaceId,
+        section: "classify",
+        system,
+        user,
+        validate: parseClassifyOutput,
+      });
+
+      const dashboardIntent = mapCoreIntentToDashboard(result.intent);
+      const promotable =
+        isPromotableCoreIntent(result.intent) &&
+        result.relevance >= PROMOTE_RELEVANCE_THRESHOLD;
+
+      if (!promotable) {
+        await ctx.runMutation(internal.candidates.applyClassifyInternal, {
+          candidateId: args.candidateId,
+          classification: dashboardIntent,
+          confidence: result.relevance,
+          status: dashboardIntent === "irrelevant" ? "irrelevant" : "dismissed",
+          skipReason: result.reason,
+        });
+        return null;
+      }
+
       await ctx.runMutation(internal.candidates.applyClassifyInternal, {
         candidateId: args.candidateId,
         classification: dashboardIntent,
         confidence: result.relevance,
-        status: dashboardIntent === "irrelevant" ? "irrelevant" : "dismissed",
-        skipReason: result.reason,
+        status: "classified",
+      });
+
+      await ctx.scheduler.runAfter(0, internal.pipelineAi.score, {
+        candidateId: args.candidateId,
       });
       return null;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "classify failed";
+      await ctx.runMutation(internal.candidates.failPipelineInternal, {
+        candidateId: args.candidateId,
+        stage: "classify",
+        reason,
+      });
+      if (workspaceId) {
+        await ctx.runMutation(internal.events.recordInternal, {
+          workspaceId,
+          type: "pipeline.error",
+          message: `Classify failed for ${handle}: ${reason.slice(0, 180)}`,
+        });
+      }
+      return null;
     }
-
-    await ctx.runMutation(internal.candidates.applyClassifyInternal, {
-      candidateId: args.candidateId,
-      classification: dashboardIntent,
-      confidence: result.relevance,
-      status: "classified",
-    });
-
-    await ctx.scheduler.runAfter(0, internal.pipelineAi.score, {
-      candidateId: args.candidateId,
-    });
-    return null;
   },
 });
 
@@ -200,9 +226,10 @@ export const draft = internalAction({
     const contextCard: ContextCard = candidate.contextCard
       ? parseLeadContextCard(candidate.contextCard)
       : { summary: candidate.snippet, highlights: [] };
+    const draftType = candidate.platform === "instagram" ? "dm" : "comment";
 
     const { system, user } = buildDraftPrompt({
-      type: "comment",
+      type: draftType,
       goal: "help_first",
       threadText: candidate.snippet,
       contextCard,
@@ -230,6 +257,7 @@ export const draft = internalAction({
 
     await ctx.runMutation(internal.leads.promoteFromCandidateInternal, {
       candidateId: args.candidateId,
+      type: draftType,
       variantA,
       variantB,
       groundedRefs: contextCard.highlights.slice(0, 3),
@@ -253,6 +281,14 @@ export const regenerateDraft = internalAction({
   args: {
     draftId: v.id("drafts"),
     leadId: v.id("leads"),
+    type: v.optional(v.union(v.literal("comment"), v.literal("dm"))),
+    goal: v.optional(
+      v.union(
+        v.literal("help_first"),
+        v.literal("soft_pitch"),
+        v.literal("direct")
+      )
+    ),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -262,10 +298,12 @@ export const regenerateDraft = internalAction({
     if (!lead) return null;
 
     const contextCard = parseLeadContextCard(lead.contextCard);
+    const type = args.type ?? "comment";
+    const goal = args.goal ?? "help_first";
 
     const { system, user } = buildDraftPrompt({
-      type: "comment",
-      goal: "help_first",
+      type,
+      goal,
       threadText: lead.threadSnippet,
       contextCard,
       variants: 2,

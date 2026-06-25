@@ -1,6 +1,6 @@
 # Zitrion Lead Engine — Chrome Extension
 
-MV3 extension (Vite + CRXJS) that runs as the **primary executor** on your live Reddit Chrome session — Instaworm-style discovery + paced auto-send.
+MV3 extension (Vite + CRXJS) that runs on your live Reddit/Instagram Chrome session for lead discovery, candidate ingestion, and manual outreach assistance.
 
 ## Structure
 
@@ -93,8 +93,9 @@ Set `EXTENSION_PAIRING_SECRET` in your Convex deployment env. The mutation retur
 ## Behavior
 
 - **Discovery alarm** (every 15 min): pulls watch rules, scrapes Reddit JSON + visible DOM via content script, pushes raw candidates.
-- **Action poll alarm** (every 2 min): claims one approved action, opens target tab, executes comment or DM on live session, reports result.
-- **Pacing**: respects workspace `dailySendCeiling`, `minGapMinutes` + random jitter (set server-side on success).
+- **Instagram post scrape** (manual popup button): collects visible commenters from the current Instagram post/reel and pushes them into the same AI review queue.
+- **Manual send flow**: the dashboard saves/copies drafts and opens the target/profile; sending stays in the live browser under user control.
+- **Pacing**: tracks manually marked sends with workspace `dailySendCeiling` and `minGapMinutes`.
 - **Kill switch**: local popup toggle + workspace `killSwitch` from Convex.
 - **Auto-pause**: content script + executor detect captcha/rate-limit copy; background calls `reportThrottle` + pauses when `autoPauseOnThrottle` is enabled.
 

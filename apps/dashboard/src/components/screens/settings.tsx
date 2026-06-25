@@ -31,15 +31,6 @@ export function SettingsScreen() {
     if (settings?.voiceGuide) setVoiceGuide(settings.voiceGuide);
   }, [settings?.voiceGuide]);
 
-  const sendsPct =
-    settings && settings.dailySendCeiling > 0
-      ? (settings.sendsToday / settings.dailySendCeiling) * 100
-      : 0;
-
-  const gapPct = settings
-    ? Math.min(100, (settings.minGapMinutes / 30) * 100)
-    : 55;
-
   const startEditModels = (section: ModelSection) => {
     if (!modelConfig) return;
     setEditingSection(section);
@@ -106,31 +97,49 @@ export function SettingsScreen() {
           <div className="mb-3.5 font-serif text-lg">Pacing & safety</div>
           <div className="flex flex-col gap-4">
             <div>
-              <div className="mb-2 flex justify-between text-[12.5px]">
+              <label className="mb-2 flex justify-between text-[12.5px]">
                 <span className="text-text-secondary">Daily send ceiling</span>
                 <span className="font-mono text-accent">
-                  {settings?.dailySendCeiling ?? 12}
+                  {settings?.sendsToday ?? 0} / {settings?.dailySendCeiling ?? 50} today
                 </span>
-              </div>
-              <div className="h-[5px] rounded bg-[#2a2820]">
-                <div
-                  className="h-full rounded bg-accent"
-                  style={{ width: `${sendsPct}%` }}
-                />
+              </label>
+              <input
+                type="range"
+                min={5}
+                max={150}
+                step={1}
+                value={settings?.dailySendCeiling ?? 50}
+                onChange={(e) =>
+                  void updatePacing({ dailySendCeiling: Number(e.target.value) })
+                }
+                className="w-full accent-[#c4a035]"
+              />
+              <div className="mt-1 flex justify-between font-mono text-[10px] text-muted-dark">
+                <span>5</span>
+                <span>150</span>
               </div>
             </div>
             <div>
-              <div className="mb-2 flex justify-between text-[12.5px]">
+              <label className="mb-2 flex justify-between text-[12.5px]">
                 <span className="text-text-secondary">Min gap between sends</span>
                 <span className="font-mono text-text-body">
-                  {settings?.minGapMinutes ?? 18} min
+                  {settings?.minGapMinutes ?? 4} min
                 </span>
-              </div>
-              <div className="h-[5px] rounded bg-[#2a2820]">
-                <div
-                  className="h-full rounded bg-accent-muted"
-                  style={{ width: `${gapPct}%` }}
-                />
+              </label>
+              <input
+                type="range"
+                min={1}
+                max={30}
+                step={1}
+                value={settings?.minGapMinutes ?? 4}
+                onChange={(e) =>
+                  void updatePacing({ minGapMinutes: Number(e.target.value) })
+                }
+                className="w-full accent-[#8a7a4a]"
+              />
+              <div className="mt-1 flex justify-between font-mono text-[10px] text-muted-dark">
+                <span>1 min</span>
+                <span>30 min</span>
               </div>
             </div>
             <div className="flex items-center justify-between">

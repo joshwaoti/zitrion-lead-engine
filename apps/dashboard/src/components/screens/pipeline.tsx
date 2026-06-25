@@ -2,6 +2,7 @@
 
 import { useQuery } from "convex/react";
 import { api } from "convex/_generated/api";
+import { ActivityFeed } from "@/components/layout/activity-feed";
 import {
   cn,
   intentLabel,
@@ -34,7 +35,11 @@ export function PipelineScreen() {
         </p>
       </header>
 
-      <div className="flex flex-wrap gap-2.5 px-[30px] pb-1 pt-5">
+      <div className="px-[30px] pb-4 pt-2">
+        <ActivityFeed compact />
+      </div>
+
+      <div className="flex flex-wrap gap-2.5 px-[30px] pb-1 pt-3">
         {STAGE_CONFIG.map(({ key, label, highlight }) => {
           const count =
             stats?.stages[key as keyof typeof stats.stages] ?? 0;

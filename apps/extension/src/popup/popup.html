@@ -23,7 +23,7 @@
           <strong id="sends-meter">—</strong>
         </div>
         <div class="row">
-          <span>Next send</span>
+          <span>Mode</span>
           <strong id="next-send">—</strong>
         </div>
         <p class="pause-reason" id="pause-reason" hidden></p>
@@ -35,6 +35,9 @@
           <span>Local kill switch</span>
         </label>
         <button id="discover-now" type="button">Poll discovery now</button>
+        <button id="instagram-discover-now" type="button">
+          Scrape current Instagram post
+        </button>
         <a id="dashboard-link" href="#" target="_blank" rel="noreferrer">Open dashboard</a>
       </section>
 
@@ -59,7 +62,7 @@
         <button id="save-config" type="button">Save pairing</button>
       </details>
 
-      <p class="hint">Uses your live Reddit session. No credentials stored.</p>
+      <p class="hint">Uses your live Reddit/Instagram browser session for reading. No credentials stored.</p>
     </main>
     <script type="module" src="./popup.ts"></script>
   </body>

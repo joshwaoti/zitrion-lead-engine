@@ -9,6 +9,7 @@ import {
   resolveWorkspaceId,
 } from "./lib/deviceAuth";
 import { buildSourceDedupeKey } from "./lib/leadLogic";
+import { transitionCandidateStat } from "./lib/candidateStats";
 import { platformValidator, watchRuleValidator } from "./lib/validators";
 
 const rawCandidateValidator = v.object({
@@ -163,6 +164,7 @@ async function ingestOneCandidate(
     pipelineStage: "raw",
   });
 
+  await transitionCandidateStat(ctx, workspaceId, null, "raw");
   await ctx.scheduler.runAfter(0, internal.pipelineAi.classify, { candidateId });
   return "inserted";
 }
@@ -185,6 +187,19 @@ export const ingestCandidates = mutation({
       if (result === "inserted") inserted += 1;
       else deduped += 1;
     }
+
+    const now = Date.now();
+    await ctx.db.patch("workspaces", workspace._id, {
+      lastPollAt: now,
+      nextPollAt: now + 15 * 60 * 1000,
+    });
+
+    await ctx.db.insert("events", {
+      workspaceId: workspace._id,
+      type: "discovery.ingest",
+      message: `Extension ingested ${inserted} new · ${deduped} deduped`,
+      createdAt: now,
+    });
 
     return { inserted, deduped };
   },
@@ -337,6 +352,24 @@ export const setExtensionPaused = mutation({
     await ctx.db.patch("deviceTokens", session._id, {
       extensionPaused: args.paused,
       pauseReason: args.paused ? args.reason : undefined,
+    });
+    return null;
+  },
+});
+
+export const reportActivity = mutation({
+  args: {
+    deviceToken: v.string(),
+    message: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const { workspace } = await requireDeviceSession(ctx, args.deviceToken);
+    await ctx.db.insert("events", {
+      workspaceId: workspace._id,
+      type: "discovery.activity",
+      message: args.message,
+      createdAt: Date.now(),
     });
     return null;
   },

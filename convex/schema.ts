@@ -58,6 +58,17 @@ export default defineSchema({
     ownerHandle: v.string(),
     sessionActive: v.boolean(),
     redditConnected: v.boolean(),
+    candidateStats: v.optional(
+      v.object({
+        raw: v.number(),
+        processing: v.number(),
+        classified: v.number(),
+        irrelevant: v.number(),
+        deduped: v.number(),
+        dismissed: v.number(),
+        promoted: v.number(),
+      })
+    ),
   }).index("by_slug", ["slug"]),
 
   accounts: defineTable({
@@ -136,7 +147,8 @@ export default defineSchema({
   })
     .index("by_workspace", ["workspaceId"])
     .index("by_workspace_and_status", ["workspaceId", "status"])
-    .index("by_workspace_and_source", ["workspaceId", "sourceId"]),
+    .index("by_workspace_and_source", ["workspaceId", "sourceId"])
+    .index("by_workspace_and_posted", ["workspaceId", "postedAt"]),
 
   leads: defineTable({
     workspaceId: v.id("workspaces"),
@@ -215,5 +227,7 @@ export default defineSchema({
     type: v.string(),
     message: v.string(),
     createdAt: v.number(),
-  }).index("by_workspace", ["workspaceId"]),
+  })
+    .index("by_workspace", ["workspaceId"])
+    .index("by_workspace_and_created", ["workspaceId", "createdAt"]),
 });
