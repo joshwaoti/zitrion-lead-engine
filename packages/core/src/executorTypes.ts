@@ -17,6 +17,20 @@ export type ApprovedAction = {
   targetUrl: string;
   content: string;
   createdAt: number;
+  /** Platform of the lead (added for the IG send loop; optional for back-compat). */
+  platform?: Platform;
+  /** Lead handle without prefix. */
+  handle?: string;
+};
+
+export type SendQueueState = {
+  approvedCount: number;
+  executingCount: number;
+  sendsToday: number;
+  dailySendCeiling: number;
+  killSwitch: boolean;
+  extensionPaused: boolean;
+  sessionActive: boolean;
 };
 
 export type ActionResult = {

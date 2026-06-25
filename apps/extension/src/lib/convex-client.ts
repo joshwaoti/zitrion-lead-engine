@@ -1,6 +1,7 @@
 import type {
   ApprovedAction,
   RawCandidate,
+  SendQueueState,
   WatchRule,
   WorkspacePacing,
 } from "@zitrion/core";
@@ -82,6 +83,15 @@ export async function claimApprovedAction(
   deviceToken: string
 ): Promise<ApprovedAction | null> {
   return convexCall(convexUrl, "mutation", "extension:claimApprovedAction", {
+    deviceToken,
+  });
+}
+
+export async function getSendQueueState(
+  convexUrl: string,
+  deviceToken: string
+): Promise<SendQueueState> {
+  return convexCall(convexUrl, "query", "extension:getSendQueueState", {
     deviceToken,
   });
 }

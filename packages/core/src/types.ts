@@ -70,6 +70,42 @@ export type CommenterProfile = {
   handle: string;
   profileUrl: string;
   commentSnippet?: string;
+  /** Display name shown next to the handle, when available. */
+  fullName?: string;
+};
+
+/**
+ * Deep profile enrichment gathered by visiting an Instagram profile page.
+ * Feeds the research/draft pipeline so DMs can be grounded in real specifics.
+ */
+export type InstagramProfileInsight = {
+  handle: string;
+  profileUrl: string;
+  fullName?: string;
+  bio?: string;
+  externalUrl?: string;
+  category?: string;
+  isVerified?: boolean;
+  isPrivate?: boolean;
+  postCount?: number;
+  followerCount?: number;
+  followingCount?: number;
+  /** Captions / alt-text of the most recent posts, for grounding. */
+  recentPosts?: string[];
+};
+
+/** How an Instagram scrape sources its leads. */
+export type InstagramScrapeMode = "commenters" | "followers";
+
+/** A scrape request issued from the extension popup. */
+export type InstagramScrapeRequest = {
+  mode: InstagramScrapeMode;
+  /** How many leads to collect/enrich. */
+  count: number;
+  /** Post URL (commenters) or profile URL (followers); defaults to active tab. */
+  targetUrl?: string;
+  /** Whether to visit each profile for deep enrichment (slower, richer). */
+  enrich?: boolean;
 };
 
 /** Draft lifecycle. */

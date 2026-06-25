@@ -29,15 +29,42 @@
         <p class="pause-reason" id="pause-reason" hidden></p>
       </section>
 
+      <section class="ig-card">
+        <div class="ig-title">Instagram outreach</div>
+        <div class="ig-modes">
+          <label class="seg">
+            <input type="radio" name="ig-mode" value="commenters" checked />
+            <span>Commenters<br /><small>current post</small></span>
+          </label>
+          <label class="seg">
+            <input type="radio" name="ig-mode" value="followers" />
+            <span>Followers<br /><small>current profile</small></span>
+          </label>
+        </div>
+        <label class="ig-count-row">
+          How many
+          <input id="ig-count" type="number" min="1" max="500" value="20" />
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="ig-enrich" checked />
+          <span>Enrich each profile (slower, sharper DMs)</span>
+        </label>
+        <button id="ig-scrape" class="primary" type="button">
+          Scrape &amp; draft DMs
+        </button>
+        <div class="ig-send-row">
+          <button id="ig-run" type="button">Run DM queue</button>
+          <button id="ig-stop" type="button">Stop</button>
+        </div>
+        <p class="ig-progress" id="ig-progress"></p>
+      </section>
+
       <section class="controls">
         <label class="toggle">
           <input type="checkbox" id="kill-switch" />
           <span>Local kill switch</span>
         </label>
-        <button id="discover-now" type="button">Poll discovery now</button>
-        <button id="instagram-discover-now" type="button">
-          Scrape current Instagram post
-        </button>
+        <button id="discover-now" type="button">Poll Reddit discovery now</button>
         <a id="dashboard-link" href="#" target="_blank" rel="noreferrer">Open dashboard</a>
       </section>
 
@@ -62,7 +89,7 @@
         <button id="save-config" type="button">Save pairing</button>
       </details>
 
-      <p class="hint">Uses your live Reddit/Instagram browser session for reading. No credentials stored.</p>
+      <p class="hint">Uses your live Reddit/Instagram browser session. No credentials stored.</p>
     </main>
     <script type="module" src="./popup.ts"></script>
   </body>

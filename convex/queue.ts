@@ -246,6 +246,105 @@ export const approve = mutation({
   },
 });
 
+function profileTargetUrl(
+  platform: "reddit" | "instagram",
+  handle: string
+): string {
+  const normalized = handle.replace(/^u\//i, "").replace(/^@/, "");
+  if (platform === "instagram") {
+    return `https://www.instagram.com/${normalized}/`;
+  }
+  return `https://www.reddit.com/user/${normalized}/`;
+}
+
+/**
+ * Approve a draft AND enqueue it as an action for the live executor (extension)
+ * to send automatically. This is the "hit reply → it sends" path: it writes an
+ * `actions` row with status "approved" which the extension claims, opens the
+ * target profile, types the DM, and sends.
+ */
+export const approveAndQueue = mutation({
+  args: {
+    leadId: v.id("leads"),
+    draftId: v.id("drafts"),
+    content: v.string(),
+    targetUrl: v.optional(v.string()),
+    type: v.optional(draftTypeValidator),
+    goal: v.optional(draftGoalValidator),
+    chosenVariant: v.optional(v.union(v.literal("a"), v.literal("b"))),
+  },
+  returns: v.object({ actionId: v.id("actions") }),
+  handler: async (ctx, args) => {
+    const lead = await ctx.db.get("leads", args.leadId);
+    if (!lead) throw new Error("Lead not found");
+
+    const draft = await ctx.db.get("drafts", args.draftId);
+    if (!draft) throw new Error("Draft not found");
+
+    const type = args.type ?? draft.type ?? (lead.platform === "instagram" ? "dm" : "comment");
+    const targetUrl =
+      args.targetUrl ??
+      (type === "dm"
+        ? profileTargetUrl(lead.platform ?? "reddit", lead.handle)
+        : lead.threadUrl ?? profileTargetUrl(lead.platform ?? "reddit", lead.handle));
+
+    await ctx.db.patch("drafts", args.draftId, {
+      status: "approved",
+      editedContent: args.content,
+      ...(args.type !== undefined ? { type: args.type } : {}),
+      ...(args.goal !== undefined ? { goal: args.goal } : {}),
+      ...(args.chosenVariant !== undefined
+        ? { chosenVariant: args.chosenVariant }
+        : {}),
+    });
+
+    await ctx.db.patch("leads", args.leadId, {
+      ...(args.targetUrl !== undefined ? { threadUrl: args.targetUrl } : {}),
+      updatedAt: Date.now(),
+    });
+
+    // Reuse an outstanding action for this lead instead of stacking duplicates.
+    const outstanding = await ctx.db
+      .query("actions")
+      .withIndex("by_workspace_and_status", (q) =>
+        q.eq("workspaceId", lead.workspaceId).eq("status", "approved")
+      )
+      .collect();
+    const existing = outstanding.find((a) => a.leadId === args.leadId);
+
+    if (existing) {
+      await ctx.db.patch("actions", existing._id, {
+        draftId: args.draftId,
+        type,
+        targetUrl,
+        content: args.content,
+        error: undefined,
+      });
+      return { actionId: existing._id };
+    }
+
+    const actionId = await ctx.db.insert("actions", {
+      leadId: args.leadId,
+      workspaceId: lead.workspaceId,
+      draftId: args.draftId,
+      type,
+      targetUrl,
+      status: "approved",
+      content: args.content,
+      createdAt: Date.now(),
+    });
+
+    await ctx.db.insert("events", {
+      workspaceId: lead.workspaceId,
+      type: "action.queued",
+      message: `Queued ${type.toUpperCase()} to ${lead.platform === "instagram" ? "@" : "u/"}${lead.handle.replace(/^u\//, "")}`,
+      createdAt: Date.now(),
+    });
+
+    return { actionId };
+  },
+});
+
 export const markSent = mutation({
   args: {
     leadId: v.id("leads"),

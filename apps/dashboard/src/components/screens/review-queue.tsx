@@ -40,6 +40,7 @@ export function ReviewQueueScreen() {
   const snooze = useMutation(api.queue.snooze);
   const dismiss = useMutation(api.queue.dismiss);
   const advanceLead = useMutation(api.pipeline.advance);
+  const approveAndQueue = useMutation(api.queue.approveAndQueue);
 
   const [selectedId, setSelectedId] = useState<Id<"leads"> | null>(null);
   const detail = useQuery(
@@ -134,6 +135,21 @@ export function ReviewQueueScreen() {
       chosenVariant,
     });
     await advanceLead({ leadId: selectedId, status: "contacted" });
+    const next = queue?.find((lead) => lead._id !== selectedId);
+    setSelectedId(next?._id ?? null);
+  };
+
+  const handleApproveAndSend = async () => {
+    if (!selectedId || !detail?.draft) return;
+    const content = editMode ? editContent : displayContent;
+    await approveAndQueue({
+      leadId: selectedId,
+      draftId: detail.draft._id,
+      content,
+      type: draftType,
+      goal: draftGoal,
+      chosenVariant,
+    });
     const next = queue?.find((lead) => lead._id !== selectedId);
     setSelectedId(next?._id ?? null);
   };
@@ -484,10 +500,20 @@ export function ReviewQueueScreen() {
                     <Button
                       variant="primary"
                       className="w-full py-3 text-sm"
-                      onClick={() => void handleMarkSent()}
+                      onClick={() => void handleApproveAndSend()}
                     >
                       <Send className="h-4 w-4" />
-                      Mark sent
+                      {draftType === "dm"
+                        ? "Approve & auto-send DM"
+                        : "Approve & queue send"}
+                    </Button>
+
+                    <Button
+                      className="w-full py-2.5"
+                      onClick={() => void handleMarkSent()}
+                    >
+                      <CheckCircle2 className="h-4 w-4" />
+                      Mark sent manually
                     </Button>
 
                     <div className="grid grid-cols-2 gap-2">

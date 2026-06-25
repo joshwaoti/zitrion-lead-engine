@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalQuery, mutation, query } from "./_generated/server";
 import { getWorkspace } from "./lib/workspace";
 
 const serviceCatalogValidator = v.array(
@@ -45,6 +45,44 @@ export const getWorkspaceSettings = query({
       ownerHandle: workspace.ownerHandle,
       sessionActive: workspace.sessionActive,
       redditConnected: workspace.redditConnected,
+    };
+  },
+});
+
+/**
+ * Internal: resolve the workspace's outbound voice (persona, voice guide,
+ * service catalog) so the AI draft/score prompts speak as the operator and
+ * pitch the operator's real services rather than the hardcoded default.
+ */
+export const getVoiceInternal = internalQuery({
+  args: { workspaceId: v.id("workspaces") },
+  returns: v.object({
+    persona: v.string(),
+    voiceGuide: v.string(),
+    serviceCatalog: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const workspace = await ctx.db.get("workspaces", args.workspaceId);
+    if (!workspace) {
+      return { persona: "", voiceGuide: "", serviceCatalog: "" };
+    }
+
+    const catalog = workspace.serviceCatalog
+      .map((service) =>
+        service.description
+          ? `${service.name}: ${service.description}`
+          : service.name
+      )
+      .join("; ");
+
+    const persona = workspace.ownerName
+      ? `${workspace.ownerName} from ${workspace.name}`
+      : workspace.name;
+
+    return {
+      persona,
+      voiceGuide: workspace.voiceGuide ?? "",
+      serviceCatalog: catalog,
     };
   },
 });

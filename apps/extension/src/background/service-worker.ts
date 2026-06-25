@@ -5,13 +5,18 @@ import {
   EXTENSION_ALARM_HEARTBEAT,
   HEARTBEAT_INTERVAL_MINUTES,
   type CommenterProfile,
+  type InstagramProfileInsight,
+  type InstagramScrapeRequest,
   type RawCandidate,
   type WatchRule,
 } from "@zitrion/core";
 import {
+  claimApprovedAction,
   fetchWatchRules,
   fetchWorkspacePacing,
+  getSendQueueState,
   ingestCandidates,
+  reportActionResult,
   reportActivity,
   reportThrottle,
   sendHeartbeat,
@@ -20,9 +25,11 @@ import {
 import type { ContentMessage, PopupMessage, ServiceWorkerResponse } from "../lib/messages";
 import {
   getConfig,
+  getIgState,
   getStatus,
   isOperational,
   saveConfig,
+  saveIgState,
   saveStatus,
   setLocalKillSwitch,
 } from "../lib/storage";
@@ -78,7 +85,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     void runDiscoveryCycle();
   }
   if (alarm.name === EXTENSION_ALARM_ACTION_POLL) {
-    void disableActionPollAlarm();
+    void processNextSend();
   }
   if (alarm.name === EXTENSION_ALARM_HEARTBEAT) {
     void heartbeatCycle();
@@ -127,6 +134,25 @@ async function handleRuntimeMessage(
   if (message.type === "TRIGGER_INSTAGRAM_DISCOVERY") {
     await runInstagramDiscoveryCycle();
     return { type: "OK" };
+  }
+
+  if (message.type === "TRIGGER_INSTAGRAM_SCRAPE") {
+    void runInstagramScrape(message.request);
+    return { type: "OK" };
+  }
+
+  if (message.type === "RUN_IG_SEND_LOOP") {
+    void startSendLoop();
+    return { type: "OK" };
+  }
+
+  if (message.type === "STOP_IG_SEND_LOOP") {
+    await stopSendLoop();
+    return { type: "OK" };
+  }
+
+  if (message.type === "GET_IG_STATE") {
+    return { type: "IG_STATE", state: await readIgRuntimeState() };
   }
 
   if (message.type === "SAVE_CONFIG") {
@@ -332,8 +358,391 @@ async function runDiscoveryCycle(): Promise<void> {
   }
 }
 
-async function disableActionPollAlarm(): Promise<void> {
+async function navigateTab(tabId: number, url: string): Promise<void> {
+  const tab = await chrome.tabs.get(tabId);
+  const current = (tab.url ?? "").split(/[?#]/)[0];
+  const target = url.split(/[?#]/)[0];
+  if (current === target) return;
+  await chrome.tabs.update(tabId, { url });
+  await waitForTabLoad(tabId);
+}
+
+function ownerHandleFromUrl(url: string): string | null {
+  try {
+    const segment = new URL(url).pathname.split("/").filter(Boolean)[0];
+    return segment ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function shortcodeFromUrl(url: string): string {
+  try {
+    return new URL(url).pathname.match(/\/(?:p|reel|tv)\/([^/]+)/)?.[1] ?? "post";
+  } catch {
+    return "post";
+  }
+}
+
+function buildIgCandidate(
+  commenter: CommenterProfile,
+  sourceUrl: string,
+  mode: "commenters" | "followers",
+  insight: InstagramProfileInsight | null
+): RawCandidate {
+  const trigger =
+    mode === "commenters"
+      ? commenter.commentSnippet?.trim()
+        ? `Commented: ${commenter.commentSnippet.trim()}`
+        : "Commented on the target post"
+      : `Follows @${ownerHandleFromUrl(sourceUrl) ?? "the target account"}`;
+
+  const key =
+    mode === "commenters"
+      ? `${shortcodeFromUrl(sourceUrl)}`
+      : `${ownerHandleFromUrl(sourceUrl) ?? "profile"}`;
+
+  const insightBlob: InstagramProfileInsight = insight ?? {
+    handle: commenter.handle,
+    profileUrl: commenter.profileUrl,
+    fullName: commenter.fullName,
+  };
+
+  const summaryBits = [
+    insightBlob.fullName,
+    insightBlob.bio,
+    insightBlob.followerCount !== undefined
+      ? `${insightBlob.followerCount} followers`
+      : "",
+    commenter.commentSnippet,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return {
+    platform: "instagram",
+    handle: commenter.handle,
+    subreddit: "instagram",
+    snippet: trigger.slice(0, 280),
+    postBody: summaryBits || trigger,
+    url: sourceUrl,
+    profileHints: JSON.stringify(insightBlob),
+    postedAt: Date.now(),
+    sourceId: `instagram:${mode}:${key}:${commenter.handle.toLowerCase()}`,
+  };
+}
+
+async function runInstagramScrape(request: InstagramScrapeRequest): Promise<void> {
+  if (!(await isOperational())) {
+    await saveIgState({ scraping: false, progress: "Paused or not paired" });
+    return;
+  }
+  const config = await getConfig();
+  if (!config) return;
+
+  const enrich = request.enrich ?? true;
+  const count = Math.max(1, Math.min(request.count, 500));
+
+  await saveIgState({
+    scraping: true,
+    stopRequested: false,
+    mode: request.mode,
+    count,
+    enrich,
+    progress: `Scraping ${request.mode}…`,
+  });
+
+  try {
+    const tabId = await ensureInstagramTab();
+
+    let targetUrl = request.targetUrl;
+    if (!targetUrl) {
+      const tab = await chrome.tabs.get(tabId);
+      targetUrl = tab.url ?? undefined;
+    }
+    if (targetUrl) await navigateTab(tabId, targetUrl);
+    await ensureContentScriptReady(tabId, "Instagram");
+
+    let scraped: CommenterProfile[] = [];
+    let sourceUrl = targetUrl ?? "";
+
+    if (request.mode === "commenters") {
+      const resp = (await chrome.tabs.sendMessage(tabId, {
+        type: "IG_SCRAPE_COMMENTERS",
+        postUrl: targetUrl,
+        limit: count,
+      })) as ContentMessage;
+      if (resp.type === "THROTTLE_DETECTED") {
+        await handleThrottle(resp.reason);
+        await saveIgState({ scraping: false, progress: `Paused: ${resp.reason}` });
+        return;
+      }
+      if (resp.type !== "IG_COMMENTERS_RESULT") {
+        throw new Error("Open an Instagram post/reel, then scrape commenters");
+      }
+      scraped = resp.commenters;
+      sourceUrl = resp.postUrl;
+      if (resp.error) console.warn("[zitrion] commenter scrape warning", resp.error);
+    } else {
+      const resp = (await chrome.tabs.sendMessage(tabId, {
+        type: "IG_SCRAPE_FOLLOWERS",
+        profileUrl: targetUrl,
+        limit: count,
+      })) as ContentMessage;
+      if (resp.type === "THROTTLE_DETECTED") {
+        await handleThrottle(resp.reason);
+        await saveIgState({ scraping: false, progress: `Paused: ${resp.reason}` });
+        return;
+      }
+      if (resp.type !== "IG_FOLLOWERS_RESULT") {
+        throw new Error("Open an Instagram profile, then scrape followers");
+      }
+      scraped = resp.followers;
+      sourceUrl = resp.profileUrl;
+      if (resp.error) console.warn("[zitrion] follower scrape warning", resp.error);
+    }
+
+    await saveIgState({
+      progress: `Found ${scraped.length} ${request.mode}. ${enrich ? "Enriching profiles…" : "Saving…"}`,
+    });
+    await reportActivity(
+      config.convexUrl,
+      config.deviceToken,
+      `IG ${request.mode}: found ${scraped.length}`
+    );
+
+    const candidates: RawCandidate[] = [];
+    const seen = new Set<string>();
+
+    for (let i = 0; i < scraped.length; i += 1) {
+      const commenter = scraped[i]!;
+      if (seen.has(commenter.handle.toLowerCase())) continue;
+      seen.add(commenter.handle.toLowerCase());
+
+      const ig = await getIgState();
+      if (ig.stopRequested) break;
+
+      let insight: InstagramProfileInsight | null = null;
+      if (enrich) {
+        await saveIgState({
+          progress: `Enriching @${commenter.handle} (${i + 1}/${scraped.length})`,
+        });
+        try {
+          await navigateTab(tabId, commenter.profileUrl);
+          await ensureContentScriptReady(tabId, "Instagram");
+          await new Promise((r) => setTimeout(r, 800 + Math.random() * 900));
+          const resp = (await chrome.tabs.sendMessage(tabId, {
+            type: "IG_ENRICH_PROFILE",
+          })) as ContentMessage;
+          if (resp.type === "IG_ENRICH_RESULT") insight = resp.insight;
+        } catch (error) {
+          console.warn("[zitrion] enrich failed", commenter.handle, error);
+        }
+        // Human-like pause between profile visits.
+        await new Promise((r) => setTimeout(r, 1500 + Math.random() * 2500));
+      }
+
+      candidates.push(buildIgCandidate(commenter, sourceUrl, request.mode, insight));
+    }
+
+    const result = await ingestCandidates(
+      config.convexUrl,
+      config.deviceToken,
+      candidates
+    );
+
+    await saveStatus({ lastDiscoveryAt: Date.now() });
+    await saveIgState({
+      scraping: false,
+      progress: `Saved ${result.inserted} new (${result.deduped} dupes). DMs drafting in the dashboard…`,
+    });
+    await reportActivity(
+      config.convexUrl,
+      config.deviceToken,
+      `IG ${request.mode}: ingested ${result.inserted} new, ${result.deduped} deduped`
+    );
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.warn("[zitrion] Instagram scrape failed", errorMessage);
+    await saveIgState({ scraping: false, progress: `Scrape failed: ${errorMessage.slice(0, 140)}` });
+    try {
+      await reportActivity(
+        config.convexUrl,
+        config.deviceToken,
+        `IG scrape failed — ${errorMessage.slice(0, 160)}`
+      );
+    } catch {
+      // ignore
+    }
+  }
+}
+
+// -----------------------------------------------------------------------------
+// DM send loop (alarm-driven so it survives service-worker termination)
+// -----------------------------------------------------------------------------
+
+function randomSendDelayMs(): number {
+  // Mostly 30–90s human gaps, with occasional longer 2–4 min pauses.
+  if (Math.random() < 0.18) return 120_000 + Math.random() * 120_000;
+  return 30_000 + Math.random() * 60_000;
+}
+
+async function scheduleNextSend(): Promise<void> {
+  await chrome.alarms.create(EXTENSION_ALARM_ACTION_POLL, {
+    when: Date.now() + randomSendDelayMs(),
+  });
+}
+
+async function startSendLoop(): Promise<void> {
+  await saveIgState({ sending: true, stopRequested: false, progress: "Starting DM queue…" });
+  await processNextSend();
+}
+
+async function stopSendLoop(): Promise<void> {
+  await saveIgState({ stopRequested: true, sending: false, progress: "DM queue stopped" });
   await chrome.alarms.clear(EXTENSION_ALARM_ACTION_POLL);
+}
+
+async function processNextSend(): Promise<void> {
+  const ig = await getIgState();
+  if (ig.stopRequested) {
+    await saveIgState({ sending: false });
+    return;
+  }
+  if (!(await isOperational())) {
+    await saveIgState({ sending: false, progress: "Paused or not paired" });
+    return;
+  }
+
+  const config = await getConfig();
+  if (!config) {
+    await saveIgState({ sending: false });
+    return;
+  }
+
+  let state;
+  try {
+    state = await getSendQueueState(config.convexUrl, config.deviceToken);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    await saveIgState({ sending: false, progress: `Send error: ${msg.slice(0, 120)}` });
+    return;
+  }
+
+  if (state.killSwitch || state.extensionPaused) {
+    await saveIgState({ sending: false, progress: "Paused" });
+    return;
+  }
+  if (state.sendsToday >= state.dailySendCeiling) {
+    await saveIgState({
+      sending: false,
+      progress: `Daily limit reached (${state.sendsToday}/${state.dailySendCeiling})`,
+    });
+    return;
+  }
+  if (state.approvedCount === 0) {
+    await saveIgState({ sending: false, progress: "DM queue complete ✓" });
+    return;
+  }
+
+  const action = await claimApprovedAction(config.convexUrl, config.deviceToken);
+  if (!action) {
+    await saveIgState({ sending: false, progress: "DM queue complete ✓" });
+    return;
+  }
+
+  const isInstagram =
+    action.platform === "instagram" || /instagram\.com/.test(action.targetUrl);
+  if (!isInstagram || action.type !== "dm") {
+    await reportActionResult(config.convexUrl, config.deviceToken, {
+      actionId: action._id,
+      status: "failed",
+      errorMessage: "Non-Instagram action skipped by extension send loop",
+    });
+    await scheduleNextSend();
+    return;
+  }
+
+  await saveIgState({
+    sending: true,
+    progress: `Sending DM to @${action.handle ?? "…"} (${state.sendsToday + 1}/${state.dailySendCeiling})`,
+  });
+  await reportActivity(
+    config.convexUrl,
+    config.deviceToken,
+    `Opening @${action.handle ?? ""} to send DM…`
+  ).catch(() => undefined);
+
+  try {
+    const tabId = await ensureInstagramTab();
+    await navigateTab(tabId, action.targetUrl);
+    await ensureContentScriptReady(tabId, "Instagram");
+    await new Promise((r) => setTimeout(r, 1200 + Math.random() * 1500));
+
+    const resp = (await chrome.tabs.sendMessage(tabId, {
+      type: "EXECUTE_ACTION",
+      action,
+    })) as ContentMessage;
+
+    if (resp.type === "ACTION_RESULT") {
+      await reportActionResult(config.convexUrl, config.deviceToken, {
+        actionId: action._id,
+        status: resp.status,
+        permalink: resp.permalink,
+        errorMessage: resp.errorMessage,
+      });
+      if (
+        resp.status === "failed" &&
+        resp.errorMessage &&
+        /try again later|action block|checkpoint|restrict/i.test(resp.errorMessage)
+      ) {
+        await handleThrottle(resp.errorMessage);
+        await saveIgState({ sending: false, progress: `Paused: ${resp.errorMessage.slice(0, 120)}` });
+        return;
+      }
+    } else {
+      await reportActionResult(config.convexUrl, config.deviceToken, {
+        actionId: action._id,
+        status: "failed",
+        errorMessage: "Unexpected response from Instagram tab",
+      });
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    await reportActionResult(config.convexUrl, config.deviceToken, {
+      actionId: action._id,
+      status: "failed",
+      errorMessage: msg.slice(0, 200),
+    }).catch(() => undefined);
+  }
+
+  await scheduleNextSend();
+}
+
+async function readIgRuntimeState() {
+  const ig = await getIgState();
+  let approvedCount = 0;
+  let sendsToday = 0;
+  let dailySendCeiling = 0;
+  const config = await getConfig();
+  if (config?.deviceToken) {
+    try {
+      const state = await getSendQueueState(config.convexUrl, config.deviceToken);
+      approvedCount = state.approvedCount;
+      sendsToday = state.sendsToday;
+      dailySendCeiling = state.dailySendCeiling;
+    } catch {
+      // best-effort
+    }
+  }
+  return {
+    scraping: ig.scraping,
+    sending: ig.sending,
+    progress: ig.progress,
+    approvedCount,
+    sendsToday,
+    dailySendCeiling,
+  };
 }
 
 function instagramSourceId(postUrl: string, handle: string, commentSnippet?: string): string {

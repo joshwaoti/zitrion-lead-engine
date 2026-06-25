@@ -27,6 +27,8 @@ const rawCandidateValidator = v.object({
 const approvedActionValidator = v.object({
   _id: v.id("actions"),
   leadId: v.id("leads"),
+  platform: platformValidator,
+  handle: v.string(),
   type: v.union(v.literal("comment"), v.literal("dm")),
   targetUrl: v.string(),
   content: v.string(),
@@ -120,6 +122,46 @@ export const getWorkspacePacing = query({
   },
 });
 
+export const getSendQueueState = query({
+  args: { deviceToken: v.string() },
+  returns: v.object({
+    approvedCount: v.number(),
+    executingCount: v.number(),
+    sendsToday: v.number(),
+    dailySendCeiling: v.number(),
+    killSwitch: v.boolean(),
+    extensionPaused: v.boolean(),
+    sessionActive: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const { session, workspace } = await requireDeviceSession(
+      ctx,
+      args.deviceToken
+    );
+    const approved = await ctx.db
+      .query("actions")
+      .withIndex("by_workspace_and_status", (q) =>
+        q.eq("workspaceId", workspace._id).eq("status", "approved")
+      )
+      .collect();
+    const executing = await ctx.db
+      .query("actions")
+      .withIndex("by_workspace_and_status", (q) =>
+        q.eq("workspaceId", workspace._id).eq("status", "executing")
+      )
+      .collect();
+    return {
+      approvedCount: approved.length,
+      executingCount: executing.length,
+      sendsToday: workspace.sendsToday,
+      dailySendCeiling: workspace.dailySendCeiling,
+      killSwitch: workspace.killSwitch,
+      extensionPaused: session.extensionPaused,
+      sessionActive: workspace.sessionActive,
+    };
+  },
+});
+
 type RawCandidateInput = {
   platform: "reddit" | "instagram";
   handle: string;
@@ -165,7 +207,13 @@ async function ingestOneCandidate(
   });
 
   await transitionCandidateStat(ctx, workspaceId, null, "raw");
-  await ctx.scheduler.runAfter(0, internal.pipelineAi.classify, { candidateId });
+  // Instagram is cold outreach: every scraped profile is a target, so skip the
+  // intent classifier and go straight to enrichment-grounded DM drafting.
+  if (candidate.platform === "instagram") {
+    await ctx.scheduler.runAfter(0, internal.pipelineAi.igOutreach, { candidateId });
+  } else {
+    await ctx.scheduler.runAfter(0, internal.pipelineAi.classify, { candidateId });
+  }
   return "inserted";
 }
 
@@ -240,6 +288,19 @@ export const claimApprovedAction = mutation({
       return null;
     }
 
+    // Recover actions stranded in "executing" by a killed service worker.
+    const executing = await ctx.db
+      .query("actions")
+      .withIndex("by_workspace_and_status", (q) =>
+        q.eq("workspaceId", workspace._id).eq("status", "executing")
+      )
+      .collect();
+    for (const stale of executing) {
+      if (now - stale.createdAt > 3 * 60 * 1000) {
+        await ctx.db.patch("actions", stale._id, { status: "approved" });
+      }
+    }
+
     const approved = await ctx.db
       .query("actions")
       .withIndex("by_workspace_and_status", (q) =>
@@ -250,18 +311,34 @@ export const claimApprovedAction = mutation({
     const action = approved.sort((a, b) => a.createdAt - b.createdAt)[0];
     if (!action) return null;
 
+    const lead = await ctx.db.get("leads", action.leadId);
+    if (!lead) return null;
+
     await ctx.db.patch("actions", action._id, { status: "executing" });
 
     return {
       _id: action._id,
       leadId: action.leadId,
+      platform: lead.platform ?? "reddit",
+      handle: lead.handle,
       type: action.type ?? "comment",
-      targetUrl: action.targetUrl ?? "",
+      targetUrl: action.targetUrl ?? profileTargetUrlForLead(lead.platform ?? "reddit", lead.handle),
       content: action.content ?? "",
       createdAt: action.createdAt,
     };
   },
 });
+
+function profileTargetUrlForLead(
+  platform: "reddit" | "instagram",
+  handle: string
+): string {
+  const normalized = handle.replace(/^u\//i, "").replace(/^@/, "");
+  if (platform === "instagram") {
+    return `https://www.instagram.com/${normalized}/`;
+  }
+  return `https://www.reddit.com/user/${normalized}/`;
+}
 
 export const reportActionResult = mutation({
   args: {
@@ -288,8 +365,15 @@ export const reportActionResult = mutation({
         completedAt: now,
       });
       await ctx.db.patch("leads", action.leadId, {
+        status: "contacted",
         permalink: args.permalink,
+        lastMessageSent: (action.content ?? "").slice(0, 120),
         updatedAt: now,
+      });
+      // Count the send so the daily ceiling is enforced. Inter-send pacing is
+      // handled client-side (randomized) by the extension send loop.
+      await ctx.db.patch("workspaces", workspace._id, {
+        sendsToday: workspace.sendsToday + 1,
       });
     } else {
       await ctx.db.patch("actions", args.actionId, {

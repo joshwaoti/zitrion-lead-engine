@@ -1,7 +1,44 @@
-import type { ExtensionConfig, ExtensionSessionStatus } from "@zitrion/core";
+import type {
+  ExtensionConfig,
+  ExtensionSessionStatus,
+  InstagramScrapeMode,
+} from "@zitrion/core";
 
 const CONFIG_KEY = "zitrion_config";
 const STATUS_KEY = "zitrion_status";
+const IG_KEY = "zitrion_ig";
+
+export type IgState = {
+  mode: InstagramScrapeMode;
+  count: number;
+  enrich: boolean;
+  scraping: boolean;
+  sending: boolean;
+  stopRequested: boolean;
+  progress: string;
+};
+
+const defaultIgState: IgState = {
+  mode: "commenters",
+  count: 20,
+  enrich: true,
+  scraping: false,
+  sending: false,
+  stopRequested: false,
+  progress: "",
+};
+
+export async function getIgState(): Promise<IgState> {
+  const result = await chrome.storage.local.get(IG_KEY);
+  return { ...defaultIgState, ...((result[IG_KEY] as Partial<IgState> | undefined) ?? {}) };
+}
+
+export async function saveIgState(patch: Partial<IgState>): Promise<IgState> {
+  const current = await getIgState();
+  const next = { ...current, ...patch };
+  await chrome.storage.local.set({ [IG_KEY]: next });
+  return next;
+}
 
 const defaultStatus: ExtensionSessionStatus = {
   paired: false,

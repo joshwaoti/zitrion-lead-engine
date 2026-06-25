@@ -135,6 +135,14 @@ export interface ResearchInput {
     bio?: string;
     activeSubreddits?: string[];
     recentItems?: string[];
+    /** Instagram enrichment. */
+    fullName?: string;
+    followers?: number;
+    following?: number;
+    posts?: number;
+    externalUrl?: string;
+    category?: string;
+    isVerified?: boolean;
   };
 }
 
@@ -157,14 +165,26 @@ export function buildResearchPrompt(input: ResearchInput): PromptMessages {
   ].join("\n");
 
   const profile = input.profile ?? {};
+  const followStats = [
+    profile.followers !== undefined ? `${profile.followers} followers` : "",
+    profile.following !== undefined ? `${profile.following} following` : "",
+    profile.posts !== undefined ? `${profile.posts} posts` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const user = [
     `HANDLE: ${input.handle} (${input.platform})`,
+    profile.fullName ? `NAME: ${profile.fullName}` : "",
+    profile.isVerified ? "VERIFIED ACCOUNT" : "",
+    profile.category ? `CATEGORY: ${profile.category}` : "",
     profile.karma !== undefined ? `KARMA: ${profile.karma}` : "",
     profile.accountAgeDays !== undefined ? `ACCOUNT AGE (days): ${profile.accountAgeDays}` : "",
     profile.bio ? `BIO: ${profile.bio}` : "",
+    followStats ? `STATS: ${followStats}` : "",
+    profile.externalUrl ? `LINK: ${profile.externalUrl}` : "",
     profile.activeSubreddits?.length ? `ACTIVE IN: ${profile.activeSubreddits.join(", ")}` : "",
     profile.recentItems?.length ? `RECENT ACTIVITY:\n- ${profile.recentItems.join("\n- ")}` : "",
-    "THREAD BEING REPLIED TO:",
+    "THREAD / TRIGGER:",
     input.threadText,
   ]
     .filter(Boolean)
@@ -186,6 +206,11 @@ export interface DraftInput {
   voice?: Partial<VoiceContext>;
   /** How many variants to produce (1-2). */
   variants?: number;
+  /**
+   * Whether the model may bail with `{"skip": true}`. Defaults to true.
+   * Cold-outreach (Instagram) passes false so every lead gets a usable DM.
+   */
+  allowSkip?: boolean;
 }
 
 const GOAL_GUIDANCE: Record<DraftGoal, string> = {
@@ -210,8 +235,12 @@ export function buildDraftPrompt(input: DraftInput): PromptMessages {
     serviceCatalog: input.voice?.serviceCatalog ?? DEFAULT_VOICE.serviceCatalog,
   };
   const variantCount = Math.min(Math.max(input.variants ?? 2, 1), 2);
+  const allowSkip = input.allowSkip ?? true;
   const surface =
     input.type === "comment" ? "a public comment reply on the thread" : "a chat / DM first-message";
+
+  const variantsShape =
+    variantCount === 2 ? '{"body": "..."}, {"body": "..."}' : '{"body": "..."}';
 
   const system = [
     `ROLE: You write as ${voice.persona}.`,
@@ -223,11 +252,18 @@ export function buildDraftPrompt(input: DraftInput): PromptMessages {
     "- Reference >=1 concrete specific from their context card.",
     "- Lead with value or genuine relevance; the pitch is secondary or absent.",
     "- Sound human and specific; never generic or templated.",
-    '- If you cannot be specific, return {"skip": true, "reason": "..."}.',
+    input.type === "dm"
+      ? "- Keep it short (2-4 sentences), warm, and easy to reply to; open with their name/handle context, end with a low-friction question."
+      : "",
+    allowSkip
+      ? '- If you cannot be specific, return {"skip": true, "reason": "..."}.'
+      : "- You MUST produce a usable message even with thin context; ground it in whatever specific you have (their name, niche, a recent post, or their comment).",
     `OUTPUT: ONLY minified JSON, one of:`,
-    `  {"variants": [${variantCount === 2 ? '{"body": "..."}, {"body": "..."}' : '{"body": "..."}'}]}`,
-    `  {"skip": true, "reason": "..."}`,
-  ].join("\n");
+    `  {"variants": [${variantsShape}]}`,
+    allowSkip ? `  {"skip": true, "reason": "..."}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   const card = input.contextCard;
   const user = [
