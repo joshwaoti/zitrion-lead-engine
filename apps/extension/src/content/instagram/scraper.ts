@@ -161,24 +161,95 @@ function collectUsernameAnchors(
   }
 }
 
+/** Does any ancestor of `el` (within `depth`) contain a <time> element? */
+function isNearTime(el: Element, depth = 5): Element | null {
+  let node: Element | null = el;
+  for (let i = 0; i < depth && node; i += 1) {
+    node = node.parentElement;
+    if (node && node.querySelector("time")) return node;
+  }
+  return null;
+}
+
+function currentPostAuthor(): string | null {
+  // /p/<code> on a profile page is "/<author>/p/<code>"; standalone is "/p/<code>".
+  const first = location.pathname.split("/").filter(Boolean)[0];
+  if (!first || first === "p" || first === "reel" || first === "tv") return null;
+  return first.toLowerCase();
+}
+
+/**
+ * Collect real commenters from a post. Comment rows (and the caption) each
+ * contain a <time>; nav/footer links do not. A commenter is the avatar link
+ * (has <img>) or username link (text === handle) inside such a row — this
+ * excludes nav chrome and caption @mentions. The post author is skipped.
+ */
+function collectCommenters(
+  seen: Set<string>,
+  out: CommenterProfile[],
+  limit: number,
+  author: string | null
+): void {
+  for (const anchor of Array.from(
+    document.querySelectorAll<HTMLAnchorElement>('a[href^="/"]')
+  )) {
+    if (out.length >= limit) return;
+    const href = anchor.getAttribute("href");
+    if (!href) continue;
+    let handle: string | null;
+    try {
+      handle = normalizeUsername(new URL(href, location.origin).pathname);
+    } catch {
+      handle = null;
+    }
+    if (!handle) continue;
+    const lower = handle.toLowerCase();
+    if (seen.has(lower) || lower === author) continue;
+
+    const row = isNearTime(anchor);
+    if (!row) continue;
+    const hasImg = Boolean(anchor.querySelector("img"));
+    const text = (anchor.textContent ?? "").trim();
+    if (!hasImg && text !== handle) continue; // skip caption @mentions / chrome
+
+    seen.add(lower);
+    out.push({
+      handle,
+      profileUrl: `${location.origin}/${handle}/`,
+      commentSnippet: cleanSnippet(handle, row.textContent),
+    });
+  }
+}
+
 /** Scroll a post's comment list, loading more, and collect commenter handles. */
 export async function scrapeCommenters(limit: number): Promise<CommenterProfile[]> {
   const seen = new Set<string>();
   const out: CommenterProfile[] = [];
+  const author = currentPostAuthor();
 
-  // The post author appears at the top; don't treat them as a commenter twice
-  // — dedupe handles that.
+  // Expand collapsed comments if a "View all / Load more" control is present.
+  const viewAll = Array.from(
+    document.querySelectorAll<HTMLElement>('span, button, div[role="button"]')
+  ).find((el) =>
+    /^(View all|Load more comments|View \d+ more comments|View replies)/i.test(
+      (el.textContent ?? "").trim()
+    )
+  );
+  if (viewAll) {
+    viewAll.click();
+    await humanDelay(800, 1400);
+  }
+
   const dialog = document.querySelector<HTMLElement>('div[role="dialog"]');
-  const scope: ParentNode = dialog ?? document.querySelector("article") ?? document.body;
 
   let stagnantRounds = 0;
-  for (let round = 0; round < 60 && out.length < limit; round += 1) {
+  for (let round = 0; round < 80 && out.length < limit; round += 1) {
     await clickLoadMoreComments();
-
     const before = out.length;
-    collectUsernameAnchors(scope, seen, out, limit, true);
+    collectCommenters(seen, out, limit, author);
 
-    const scrollable = findScrollable(scope) ?? findScrollable(document);
+    const scrollable =
+      (dialog && findScrollable(dialog)) ?? findScrollable(document);
     if (scrollable) {
       scrollable.scrollTop = scrollable.scrollHeight;
     } else {
@@ -188,15 +259,30 @@ export async function scrapeCommenters(limit: number): Promise<CommenterProfile[
 
     if (out.length === before) {
       stagnantRounds += 1;
-      if (stagnantRounds >= 4) break;
+      if (stagnantRounds >= 5) break;
     } else {
       stagnantRounds = 0;
     }
   }
 
-  // Final sweep after the last scroll settled.
-  collectUsernameAnchors(scope, seen, out, limit, true);
+  collectCommenters(seen, out, limit, author);
   return out.slice(0, limit);
+}
+
+/** Find the "N followers" control (current IG renders it as <a href="#">). */
+function findFollowersTrigger(): HTMLElement | null {
+  const direct = document.querySelector<HTMLElement>('a[href$="/followers/"]');
+  if (direct) return direct;
+  const candidates = Array.from(
+    document.querySelectorAll<HTMLElement>(
+      'a[role="link"], a, div[role="button"], button, span'
+    )
+  );
+  const el = candidates.find((e) =>
+    /^[\d.,]+\s*[km]?\s+followers$/i.test((e.textContent ?? "").replace(/\s+/g, " ").trim())
+  );
+  if (!el) return null;
+  return (el.closest('a, div[role="button"], button') as HTMLElement | null) ?? el;
 }
 
 /** Open a profile's followers dialog, scroll it, and collect follower handles. */
@@ -204,16 +290,12 @@ export async function scrapeFollowers(limit: number): Promise<CommenterProfile[]
   // Open the followers dialog if it isn't already open.
   let dialog = document.querySelector<HTMLElement>('div[role="dialog"]');
   if (!dialog) {
-    const link =
-      document.querySelector<HTMLAnchorElement>('a[href$="/followers/"]') ??
-      Array.from(document.querySelectorAll<HTMLAnchorElement>("a")).find((a) =>
-        /\/followers\/?$/.test(a.getAttribute("href") ?? "")
-      );
-    if (!link) {
-      throw new Error("Followers link not found — open the profile page first");
+    const trigger = findFollowersTrigger();
+    if (!trigger) {
+      throw new Error("Followers control not found — open the profile page first");
     }
-    link.click();
-    for (let i = 0; i < 20 && !dialog; i += 1) {
+    trigger.click();
+    for (let i = 0; i < 25 && !dialog; i += 1) {
       await humanDelay(300, 600);
       dialog = document.querySelector<HTMLElement>('div[role="dialog"]');
     }
@@ -305,11 +387,23 @@ export function enrichCurrentProfile(): InstagramProfileInsight | null {
     fullName = h1?.textContent?.trim() || undefined;
   }
 
-  const counts = parseMetaCounts();
-
-  // Bio: the header text minus the username/name and the counts row.
-  let bio: string | undefined;
   const headerText = header.innerText ?? "";
+
+  // Counts: the DOM header text is authoritative; og:description is often stale.
+  const meta = parseMetaCounts();
+  const followerCount =
+    parseCount(headerText.match(/([\d.,]+\s*[km]?)\s+followers/i)?.[1]) ??
+    meta.followers;
+  const followingCount =
+    parseCount(headerText.match(/([\d.,]+\s*[km]?)\s+following/i)?.[1]) ??
+    meta.following;
+  const postCount =
+    parseCount(headerText.match(/([\d.,]+\s*[km]?)\s+posts/i)?.[1]) ?? meta.posts;
+
+  // Bio: header lines minus username/name, counts, and UI chrome.
+  const UI_WORDS =
+    /^(Edit profile|View archive|Note|New|Professional dashboard|Message|Follow|Following|Email|Contact|More|Mute|Restrict|Block|Switch to professional account)/i;
+  let bio: string | undefined;
   const lines = headerText
     .split("\n")
     .map((l) => l.trim())
@@ -318,13 +412,13 @@ export function enrichCurrentProfile(): InstagramProfileInsight | null {
       (l) =>
         l.toLowerCase() !== handle.toLowerCase() &&
         l !== fullName &&
-        !/^\d/.test(l) &&
-        !/followers|following|posts/i.test(l) &&
-        !/^(Follow|Following|Message|Email|Contact|More)$/i.test(l)
+        !/^[\d.,]+\s*[km]?\s+(followers|following|posts)/i.test(l) &&
+        !/^Note\.\.\./i.test(l) &&
+        !UI_WORDS.test(l)
     );
   if (lines.length) bio = lines.slice(0, 4).join(" ").slice(0, 400);
 
-  // External link in the bio (non-instagram http link).
+  // External link in the bio (non-instagram http link). Prefer the href.
   let externalUrl: string | undefined;
   const linkEl = Array.from(header.querySelectorAll<HTMLAnchorElement>("a")).find(
     (a) => {
@@ -332,26 +426,30 @@ export function enrichCurrentProfile(): InstagramProfileInsight | null {
       return /^https?:\/\//.test(href) && !/instagram\.com/.test(href);
     }
   );
-  if (linkEl) externalUrl = linkEl.textContent?.trim() || linkEl.href;
+  if (linkEl) {
+    const text = linkEl.textContent?.trim() ?? "";
+    externalUrl = /\.[a-z]{2,}/i.test(text) ? text : linkEl.href;
+  }
 
   const isVerified = Boolean(header.querySelector('svg[aria-label="Verified"]'));
   const isPrivate = /This account is private|This Account is Private/i.test(
     document.body?.innerText ?? ""
   );
 
-  // Recent posts: caption/alt text from the post grid thumbnails.
+  // Recent posts: alt text from the grid thumbnails (links are /<handle>/p/...).
   const recentPosts = Array.from(
-    document.querySelectorAll<HTMLImageElement>('a[href^="/p/"] img[alt], a[href^="/reel/"] img[alt]')
+    document.querySelectorAll<HTMLImageElement>(
+      'a[href*="/p/"] img[alt], a[href*="/reel/"] img[alt]'
+    )
   )
     .map((img) => img.getAttribute("alt") ?? "")
     .map((alt) =>
       alt
-        .replace(/^Photo (shared )?by .*? on .*?\. /i, "")
-        .replace(/May be an image of/i, "")
+        .replace(/^Photo (shared )?by .*? on .*?\.\s*/i, "")
         .replace(/\s+/g, " ")
         .trim()
     )
-    .filter((alt) => alt.length > 8)
+    .filter((alt) => alt.length > 5 && !/change profile photo/i.test(alt))
     .slice(0, 4);
 
   return {
@@ -362,9 +460,9 @@ export function enrichCurrentProfile(): InstagramProfileInsight | null {
     externalUrl,
     isVerified,
     isPrivate,
-    postCount: counts.posts,
-    followerCount: counts.followers,
-    followingCount: counts.following,
+    postCount,
+    followerCount,
+    followingCount,
     recentPosts,
   };
 }
