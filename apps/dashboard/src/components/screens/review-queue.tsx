@@ -35,12 +35,11 @@ function targetLabel(type: DraftType): string {
 export function ReviewQueueScreen() {
   const queue = useQuery(api.queue.list);
   const toggleKillSwitch = useMutation(api.settings.toggleKillSwitch);
-  const approve = useMutation(api.queue.approve);
-  const markSent = useMutation(api.queue.markSent);
   const editDraft = useMutation(api.queue.editDraft);
   const regenerate = useMutation(api.queue.regenerate);
   const snooze = useMutation(api.queue.snooze);
   const dismiss = useMutation(api.queue.dismiss);
+  const advanceLead = useMutation(api.pipeline.advance);
 
   const [selectedId, setSelectedId] = useState<Id<"leads"> | null>(null);
   const detail = useQuery(
@@ -64,9 +63,12 @@ export function ReviewQueueScreen() {
 
   useEffect(() => {
     if (!detail?.draft) return;
+    const platform =
+      detail.lead.platform ??
+      (detail.lead.subreddit === "instagram" ? "instagram" : "reddit");
     const recommended =
       selectedQueueItem?.recommendedAction ??
-      (detail.lead.platform === "instagram" ? "dm" : "comment");
+      (platform === "instagram" ? "dm" : "comment");
     const type = detail.draft.type ?? recommended;
     const variant = detail.draft.chosenVariant ?? "a";
     const content =
@@ -90,22 +92,23 @@ export function ReviewQueueScreen() {
     );
   }, [detail, editMode, editContent, chosenVariant]);
 
+  const leadPlatform =
+    detail?.lead.platform ??
+    (detail?.lead.subreddit === "instagram" ? "instagram" : "reddit");
   const sourceUrl = detail?.lead.threadUrl;
   const leadProfileUrl = detail
-    ? profileUrl(detail.lead.platform, detail.lead.handle)
+    ? profileUrl(leadPlatform, detail.lead.handle)
     : "#";
   const leadComposeUrl = detail
-    ? composeUrl(detail.lead.platform, detail.lead.handle)
+    ? composeUrl(leadPlatform, detail.lead.handle)
     : "#";
 
   const handleSaveReady = async () => {
     if (!selectedId || !detail?.draft) return;
     const content = editMode ? editContent : displayContent;
-    await approve({
-      leadId: selectedId,
-      draftId: detail.draft._id,
+    await editDraft({
       content,
-      targetUrl: sourceUrl,
+      draftId: detail.draft._id,
       type: draftType,
       goal: draftGoal,
       chosenVariant,
@@ -123,13 +126,14 @@ export function ReviewQueueScreen() {
   const handleMarkSent = async () => {
     if (!selectedId || !detail?.draft) return;
     const content = editMode ? editContent : displayContent;
-    await markSent({
-      leadId: selectedId,
-      draftId: detail.draft._id,
+    await editDraft({
       content,
-      targetUrl: sourceUrl,
+      draftId: detail.draft._id,
       type: draftType,
+      goal: draftGoal,
+      chosenVariant,
     });
+    await advanceLead({ leadId: selectedId, status: "contacted" });
     const next = queue?.find((lead) => lead._id !== selectedId);
     setSelectedId(next?._id ?? null);
   };
@@ -177,7 +181,13 @@ export function ReviewQueueScreen() {
           {queue?.map((item) => {
             const active = item._id === selectedId;
             const dimmed = item.score < 50;
-            const TargetIcon = item.recommendedAction === "dm" ? Mail : MessageCircle;
+            const itemPlatform =
+              item.platform ??
+              (item.subreddit === "instagram" ? "instagram" : "reddit");
+            const action =
+              item.recommendedAction ??
+              (itemPlatform === "instagram" ? "dm" : "comment");
+            const TargetIcon = action === "dm" ? Mail : MessageCircle;
             return (
               <button
                 key={item._id}
@@ -198,7 +208,7 @@ export function ReviewQueueScreen() {
                       active ? "font-semibold" : "font-medium text-text-body"
                     )}
                   >
-                    {item.platform === "instagram" ? "@" : "u/"}
+                    {itemPlatform === "instagram" ? "@" : "u/"}
                     {item.handle.replace(/^u\//, "")}
                   </span>
                   <span className={cn("font-mono text-[13px] font-medium", scoreColor(item.score))}>
@@ -208,10 +218,10 @@ export function ReviewQueueScreen() {
                 <div className="mb-2 flex items-center gap-1.5">
                   <span className="inline-flex items-center gap-1 rounded-md border border-[#2a2820] px-1.5 py-[3px] text-[10px] text-muted">
                     <TargetIcon className="h-3 w-3" />
-                    {targetLabel(item.recommendedAction)}
+                    {targetLabel(action)}
                   </span>
                   <span className="font-mono text-[10.5px] text-muted-dark">
-                    {item.platform === "instagram"
+                    {itemPlatform === "instagram"
                       ? "instagram"
                       : `r/${item.subreddit.replace(/^r\//, "")}`}
                   </span>
@@ -240,11 +250,11 @@ export function ReviewQueueScreen() {
             <>
               <div className="mb-[18px] flex items-center gap-3">
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-border-accent bg-[#242219] font-mono text-[13px] text-accent">
-                  {detail.lead.platform === "instagram" ? "IG" : "RD"}
+                  {leadPlatform === "instagram" ? "IG" : "RD"}
                 </div>
                 <div className="min-w-0">
                   <div className="truncate text-[17px] font-semibold tracking-tight">
-                    {detail.lead.platform === "instagram" ? "@" : "u/"}
+                    {leadPlatform === "instagram" ? "@" : "u/"}
                     {detail.lead.handle.replace(/^u\//, "")}
                   </div>
                   <div className="mt-[3px] truncate font-mono text-[11.5px] text-muted">
@@ -259,7 +269,7 @@ export function ReviewQueueScreen() {
                     key={sub}
                     className="rounded-full border border-[#28261d] bg-[#1d1c14] px-2.5 py-1 text-[11px] text-text-secondary"
                   >
-                    {detail.lead.platform === "instagram" ? "instagram" : sub}
+                    {leadPlatform === "instagram" ? "instagram" : sub}
                   </span>
                 ))}
               </div>
@@ -496,8 +506,6 @@ export function ReviewQueueScreen() {
                           void regenerate({
                             draftId: detail.draft!._id,
                             leadId: selectedId!,
-                            type: draftType,
-                            goal: draftGoal,
                           })
                         }
                       >
